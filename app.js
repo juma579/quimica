@@ -4542,7 +4542,16 @@
             } })],
         h('h3', { text: '💻 Conectar con el PC' }),
         enLaWeb
-          ? h('p', { class: 'nota', text: 'En la versión web (la del iPhone) no se puede conectar con Química PC. Todo se guarda solo en este aparato: haz copias de vez en cuando (abajo), y los cuadernos se pueden guardar en PDF con «📄 Hacer un informe».' })
+          ? [
+            h('p', { class: 'nota', text: 'Esta página (la de internet) no puede hablar con Química PC: el navegador no lo deja. Para conectarte:' }),
+            h('ol', { class: 'pasos-qr' },
+              h('li', { text: 'Abre Química PC en tu ordenador y ve a ⚙️ Ajustes: sale un código QR.' }),
+              h('li', { text: 'Con el móvil en la misma wifi, apunta la cámara al QR y toca el enlace que sale: se abre la app que sirve tu PC, ya conectada.' }),
+              h('li', { text: 'Para tenerla como una app: menú del navegador → «Añadir a pantalla de inicio».' })),
+            h('p', { class: 'nota', text: 'Ojo: esa app y esta página guardan cosas distintas. Si ya tienes recetas aquí, haz abajo una «Copia de seguridad de todo» y recupérala allí.' }),
+            /Android/i.test(navigator.userAgent) && h('p', { class: 'nota' }, 'En Android también puedes instalar la app de verdad (con alarmas que suenan con la app cerrada, y escanea el QR desde Ajustes): ',
+              h('a', { href: 'https://github.com/juma579/quimica/releases/latest', target: '_blank', rel: 'noopener', text: 'descargar la APK' }), '.'),
+          ]
           : seccionPC(pintar),
         h('h3', { text: '📱 Pantalla de la receta' }),
         h('label', { class: 'parte-opcion' },
