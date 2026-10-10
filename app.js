@@ -4149,6 +4149,8 @@
   const pedirPC = async (base, codigo, ruta, opciones = {}) => {
     const r = await fetch(`${base}${ruta}`, { ...opciones, headers: { 'x-codigo': codigo, ...(opciones.headers || {}) }, signal: AbortSignal.timeout(opciones.espera || 15000) });
     if (r.status === 403) throw new Error('El código no es el del PC');
+    // (el PC bloquea un rato tras 5 códigos equivocados seguidos: versión 96)
+    if (r.status === 429) throw new Error(`Demasiados intentos con un código equivocado: el PC no contesta durante ${r.headers.get('Retry-After') || 60} s. Revisa el código`);
     if (!r.ok) throw new Error(`El PC ha contestado ${r.status}`);
     return r;
   };
@@ -4308,9 +4310,20 @@
       pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => poner(info,
         h('p', { text: 'Esta es la app en el PC. Para conectar el móvil, en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC, y escribe:' }),
         h('p', {}, 'Dirección: ', h('b', { text: (r.direcciones || []).join('  o  ') || '(este PC no está en ninguna red)' })),
-        h('p', {}, 'Código: ', h('b', { text: r.codigo })),
-        h('p', { class: 'nota', text: `O por cable USB: conecta el cable y, en el móvil, «🔌 Por cable USB». Tus datos y fotos se guardan en ${r.carpeta}.` }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
-      return [info, estado, ahora];
+        h('p', {}, 'Código: ', h('b', { class: 'codigo-pc', text: r.codigo })),
+        h('p', { class: 'nota', text: `O por cable USB: conecta el cable y, en el móvil, «🔌 Por cable USB». Tus datos y fotos se guardan en ${r.carpeta}.` }),
+        h('p', { class: 'nota', text: '🔒 Por la wifi, conéctalo solo en una red de confianza (la de casa): lo que se pasa no va cifrado. En una wifi pública o de la universidad, mejor el cable.' }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
+      // Un código nuevo, por si alguien ha visto el de ahora (versión 96)
+      const cambiarCodigo = h('button', { class: 'boton discreto', text: '🔑 Cambiar el código', onclick: async () => {
+        if (!await preguntar({ texto: '¿Cambiar el código?', detalle: 'Hazlo si alguien ha visto el de ahora. Los móviles conectados por la wifi dejarán de sincronizar hasta que les pongas el nuevo (Desconectar del PC y volver a conectar).', si: 'Cambiar el código', no: 'Cancelar' })) return;
+        try {
+          const r = await (await pedirPC('', '', '/api/codigo-nuevo', { method: 'POST' })).json();
+          const b = info.querySelector('.codigo-pc');
+          if (b) b.textContent = r.codigo;
+          avisar(`Código nuevo: ${r.codigo}`);
+        } catch { avisar('No se ha podido cambiar el código'); }
+      } });
+      return [info, estado, ahora, cambiarCodigo];
     }
     const pc = leer('quimica.pc', null);
     if (pc && pc.direccion) {
