@@ -1107,6 +1107,8 @@
           receta.avisos.map((a) => h('p', { text: a })),
           h('button', { text: 'Ya lo he revisado: quitar este aviso', onclick: () => { receta.avisos = []; guardarRecetas(); pintarLista(); pintar(); } })),
         receta.seguridad && h('div', { class: 'seguridad', text: `🥽 ${receta.seguridad}` }),
+        // Lo del texto que no es un paso pero puede importar: purezas, grados, marcas (la IA lo separa)
+        receta.notas && h('div', { class: 'notas-receta' }, h('b', { text: '📝 Del texto original' }), h('p', { text: receta.notas })),
         (receta.datos.length > 0 || receta.calculos.length > 0) && [
           h('h3', { text: '🧮 Datos y cantidades' }),
           h('p', { class: 'nota', text: 'Cambia un dato y se recalcula todo. Cada cantidad va debajo de los datos que usa; tócala para ver su fórmula.' }),
@@ -1714,10 +1716,11 @@
     const nombre = campo({ placeholder: 'Nombre de la receta', value: r.nombre, autocapitalize: 'sentences' });
     const resumen = h('textarea', { class: 'campo', rows: 2, placeholder: 'Qué se prepara o qué se hace', value: r.resumen || '' });
     const seguridad = h('textarea', { class: 'campo', rows: 2, placeholder: 'Guantes, gafas, vitrina…', value: r.seguridad || '' });
+    const notas = h('textarea', { class: 'campo', rows: 3, placeholder: 'Purezas, grados, marcas, referencias… (lo que no es un paso pero importa)', value: r.notas || '' });
 
     // La receta tal como quedaría (sin lo que solo usa el formulario)
     const candidata = () => ({
-      id: r.id || null, nombre: nombre.value, resumen: resumen.value, seguridad: seguridad.value,
+      id: r.id || null, nombre: nombre.value, resumen: resumen.value, seguridad: seguridad.value, notas: notas.value,
       textoOriginal: r.textoOriginal, modelo: r.modelo, avisos: [],
       // Un peso molecular cuenta como escrito a mano si ya lo era o si se ha cambiado el número aquí
       // (con el valor vacío lo vuelve a calcular la app)
@@ -1762,6 +1765,7 @@
       h('span', { class: 'etiqueta', text: 'Nombre' }), nombre,
       h('span', { class: 'etiqueta', text: 'Resumen' }), resumen,
       h('span', { class: 'etiqueta', text: 'Seguridad' }), seguridad,
+      h('span', { class: 'etiqueta', text: 'Notas' }), notas,
       h('h3', { text: '🔢 Datos' }),
       h('p', { class: 'nota', text: 'Los números que querrás cambiar: volumen, concentración, pureza, densidad… Con la unidad g/mol, escribe la fórmula química y el peso molecular lo calcula la app.' }),
       cajaDatos,

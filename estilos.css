@@ -98,6 +98,9 @@ textarea.campo { resize: vertical; min-height: 80px; }
 .resumen { color: var(--suave); }
 .avisos, .seguridad { border-radius: 12px; padding: 10px 12px; margin-top: 10px; font-size: 15px; background: var(--aviso-fondo); color: var(--aviso-texto); }
 .avisos p + p { margin-top: 6px; }
+/* Las notas de la receta (versión 94): lo del texto original que importa y no es un paso */
+.notas-receta { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--color-suave); color: var(--texto); font-size: 14.5px; }
+.notas-receta p { margin-top: 4px; white-space: pre-wrap; }
 .avisos button { margin-top: 8px; border: 0; background: none; text-decoration: underline; color: inherit; padding: 6px 0; }
 
 /* Datos: nombre a la izquierda, número y unidad a la derecha */

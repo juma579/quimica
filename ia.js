@@ -42,6 +42,8 @@
       nombre: { type: 'STRING' },
       resumen: { type: 'STRING' },
       seguridad: { type: 'STRING', nullable: true },
+      // Lo que dice el texto y no es un paso ni una cantidad, pero puede importar (versión 94)
+      notas: { type: 'STRING', nullable: true },
       datos: {
         type: 'ARRAY',
         items: {
@@ -103,6 +105,7 @@ La app tiene DATOS (números que el usuario cambia), CANTIDADES (las calcula la 
 
 - nombre corto; resumen: una frase de qué se prepara o qué se hace.
 - seguridad: pocas frases (lo del texto y lo evidente: guantes, gafas, vitrina, "el ácido sobre el agua"); null si no hace falta. Si se calienta un disolvente inflamable o va al horno algo empapado en él: placa sin llama, ventilación, por debajo de su ebullición, y evaporarlo en vitrina antes del horno.
+- notas: lo que dice el texto y no es un paso ni una cantidad, pero que alguien que repita la receta querría saber: pureza o grado de un reactivo ("PVA 99+ % hidrolizado", "ácido fosfórico ≥85 %"), marca o referencia de un material o equipo ("fibra HexForce AGP193-P de Hexcel"), tipo o tamaño de muestra. Frases cortas, separadas por saltos de línea, sin repetir lo que ya está en los pasos ni en los datos; null si no hay nada.
 - datos: lo que un químico querría cambiar: volumen a preparar, concentraciones, masa de partida, equivalentes, pureza, densidad y pesos moleculares.
   - id: minúsculas sin tilde, números y "_", empezando por letra ("v_final", "c_nacl", "pm_nacl"). nombre: legible ("Concentración de NaCl").
   - origen y valor: "texto" (el número está en el texto) o "deducido" (sale de números del texto), con su valor; "formula" (peso molecular: pon formula, la química bien escrita, "CuSO4·5H2O", con el hidrato exacto que diga el texto; si el texto NO dice hidrato, la sal sin agua, "Cu(NO3)2": nunca te inventes uno) o "falta" (el texto no lo da: casi siempre el volumen a preparar), con valor null. NUNCA inventes un valor (ni 100 mL ni 1 L).
@@ -219,7 +222,7 @@ Cómo montarlo:
 
   const pedirCambio = (receta, peticion) => {
     const actual = {
-      nombre: receta.nombre, resumen: receta.resumen, seguridad: receta.seguridad || null,
+      nombre: receta.nombre, resumen: receta.resumen, seguridad: receta.seguridad || null, notas: receta.notas || null,
       // Un peso molecular escrito a mano va sin fórmula, para que la app no lo vuelva a calcular
       // (origen "texto" en los que tienen valor, para que la IA los devuelva tal cual)
       datos: receta.datos.map((d) => {

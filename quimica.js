@@ -1184,6 +1184,10 @@
     if (!pasos.length) return { error: 'La receta no tiene ningún paso' };
 
     const receta = { id: texto(r.id, 40) || null, nombre, resumen: texto(r.resumen, 300), seguridad: texto(r.seguridad, 600), datos, calculos, pasos };
+    // Notas (versión 94): lo del texto que no es un paso pero puede importar (purezas, grados, marcas).
+    // Conservan sus saltos de línea (una nota por línea)
+    const notas = String(r.notas == null ? '' : r.notas).replace(/\r/g, '').split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join('\n').slice(0, 1500);
+    if (notas) receta.notas = notas;
     if (typeof r.textoOriginal === 'string' && r.textoOriginal.trim()) receta.textoOriginal = r.textoOriginal.slice(0, 20000);
     if (Array.isArray(r.avisos)) receta.avisos = r.avisos.map((a) => texto(a, 300)).filter(Boolean).slice(0, 20);
     // Con qué modelo de la IA se hizo (se ve al final de la receta)
