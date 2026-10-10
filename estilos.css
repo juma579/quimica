@@ -1,0 +1,632 @@
+/* Química. Base clara; el modo oscuro sigue solo al del móvil (al final) */
+:root {
+  --fondo: #f3f4f9;
+  --tarjeta: #ffffff;
+  --texto: #1b1c24;
+  --suave: #5d6072;
+  --borde: #d9dbe7;
+  --color: #3949ab;
+  --sobre-color: #ffffff;
+  --color-suave: #e8eaf6;
+  --ok: #2e7d32;
+  --aviso-fondo: #fff4d6;
+  --aviso-texto: #6b4a00;
+  --peligro: #c62828;
+  --arriba: env(safe-area-inset-top, 0px);
+  --abajo: env(safe-area-inset-bottom, 0px);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overscroll-behavior: none;
+}
+[hidden] { display: none !important; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+h1, h2, h3, p { margin: 0; }
+
+/* ─── Principal ─── */
+.cabecera, .panel-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(var(--arriba) + 10px) 12px 10px;
+  background: var(--color);
+  color: var(--sobre-color);
+}
+.cabecera h1, .panel-cabecera h2 { flex: 1; font-size: 20px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icono { background: none; border: 0; font-size: 24px; min-width: 44px; height: 44px; border-radius: 22px; color: inherit; }
+.icono:active { background: rgba(255, 255, 255, .2); }
+#principal { flex: 1; overflow-y: auto; padding: 12px 12px calc(var(--abajo) + 90px); }
+#buscar, .campo {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  background: var(--tarjeta);
+}
+textarea.campo { resize: vertical; min-height: 80px; }
+.tarjeta {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  background: var(--tarjeta);
+}
+.tarjeta:active { background: var(--color-suave); }
+.tarjeta h3 { font-size: 18px; }
+.tarjeta p { color: var(--suave); font-size: 15px; margin-top: 4px; }
+.tarjeta .meta { font-size: 14px; }
+.nota { color: var(--suave); font-size: 15px; margin-top: 8px; }
+#vacio, #vacio-cuadernos { text-align: center; padding: 40px 16px; }
+.vacio-dibujo { font-size: 64px; }
+.flotante {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--abajo) + 16px);
+  padding: 14px 20px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--color);
+  color: var(--sobre-color);
+  font-weight: 600;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .3);
+}
+
+/* ─── Cronómetros en marcha ─── */
+#cronometros { background: var(--color-suave); padding: 6px 12px; }
+.crono-fila { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 15px; }
+.crono-fila span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crono-tiempo { font-variant-numeric: tabular-nums; font-weight: 700; }
+.crono-parar { border: 0; background: none; font-size: 18px; min-width: 40px; height: 36px; }
+
+/* ─── Paneles por encima ─── */
+.panel { position: fixed; inset: 0; background: var(--fondo); display: flex; flex-direction: column; z-index: 10; }
+.panel-cuerpo { flex: 1; overflow-y: auto; padding: 12px 12px calc(var(--abajo) + 24px); }
+.panel-cuerpo h3 { font-size: 17px; margin: 22px 0 8px; }
+.panel-cuerpo h3:first-child { margin-top: 4px; }
+.caja { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 14px; padding: 4px 12px; }
+.resumen { color: var(--suave); }
+.avisos, .seguridad { border-radius: 12px; padding: 10px 12px; margin-top: 10px; font-size: 15px; background: var(--aviso-fondo); color: var(--aviso-texto); }
+.avisos p + p { margin-top: 6px; }
+.avisos button { margin-top: 8px; border: 0; background: none; text-decoration: underline; color: inherit; padding: 6px 0; }
+
+/* Datos: nombre a la izquierda, número y unidad a la derecha */
+.dato { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--borde); }
+.dato:last-child { border-bottom: 0; }
+.dato-nombre { flex: 1; min-width: 0; }
+.dato-nombre small { display: block; color: var(--suave); font-size: 13px; }
+.dato-nombre small button { border: 0; background: none; color: var(--color); padding: 4px 0; font-size: 13px; text-decoration: underline; }
+.dato input { width: 96px; padding: 10px 8px; text-align: right; border: 1px solid var(--borde); border-radius: 10px; background: var(--fondo); font-variant-numeric: tabular-nums; }
+.dato input.falta { border-color: #e0a800; background: var(--aviso-fondo); }
+.dato-unidad { width: 52px; color: var(--suave); font-size: 15px; }
+/* La calculadora: la unidad de cada dato se elige, y el resultado sale grande */
+.dato select { width: 84px; padding: 10px 4px; border: 1px solid var(--borde); border-radius: 10px; background: var(--fondo); color: inherit; font: inherit; font-size: 15px; }
+select.campo { appearance: auto; }
+.resultado { margin-top: 4px; padding: 14px; border-radius: 14px; background: var(--color-suave); display: flex; flex-direction: column; gap: 6px; }
+.resultado-valor { font-size: 30px; font-weight: 700; color: var(--color); font-variant-numeric: tabular-nums; }
+.resultado small { color: var(--suave); font-size: 13px; }
+.resultado.pendiente { color: var(--suave); }
+.resultado.error { background: var(--aviso-fondo); color: var(--aviso-texto); }
+/* Cada soluto de una disolución, en su tarjeta: nombre, sus datos y lo que hay que pesar */
+.soluto { margin-bottom: 10px; padding-top: 10px; padding-bottom: 12px; }
+.soluto-cabecera { display: flex; gap: 6px; align-items: center; }
+.soluto-cabecera .campo { padding: 9px 10px; border-radius: 9px; font-weight: 600; }
+.soluto-cabecera .quitar { border: 0; background: none; font-size: 18px; width: 44px; height: 40px; }
+.soluto .resultado { margin-top: 8px; }
+.calculo-valor { font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* max-width: sin él, un mensaje largo ("Falta el dato «…»") aplasta el nombre en una columna estrecha */
+.calculo-valor.error { color: var(--peligro); font-size: 14px; font-weight: 400; white-space: normal; text-align: right; max-width: 40%; }
+/* ─── La cara de cada fórmula: un color por tipo (--fc, el del texto; --fb, el del fondo) ─── */
+.color-pesar { --fc: #1565c0; --fb: #e3f2fd; }
+.color-diluir { --fc: #00838f; --fb: #e0f7fa; }
+.color-repartir { --fc: #6a1b9a; --fb: #f3e5f5; }
+.color-acido { --fc: #d84315; --fb: #fbe9e7; }
+.color-moles { --fc: #2e7d32; --fb: #e8f5e9; }
+.color-reaccion { --fc: #ad1457; --fb: #fce4ec; }
+.color-liquido { --fc: #0277bd; --fb: #e1f5fe; }
+.color-libre { --fc: #616161; --fb: #eeeeee; }
+@media (prefers-color-scheme: dark) {
+  .color-pesar { --fc: #90caf9; --fb: #172636; }
+  .color-diluir { --fc: #80deea; --fb: #112d31; }
+  .color-repartir { --fc: #ce93d8; --fb: #2a1a30; }
+  .color-acido { --fc: #ffab91; --fb: #36201a; }
+  .color-moles { --fc: #a5d6a7; --fb: #182a1a; }
+  .color-reaccion { --fc: #f48fb1; --fb: #351a26; }
+  .color-liquido { --fc: #81d4fa; --fb: #12283a; }
+  .color-libre { --fc: #bdbdbd; --fb: #2a2a2e; }
+}
+/* La etiqueta "⚖️ Pesar (molaridad)" de cada cantidad de la receta */
+.etiqueta-formula { display: inline-block; padding: 2px 9px; border-radius: 10px; background: var(--fb); color: var(--fc); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.calculo-formula { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
+.calculo-formula .fraccion { color: var(--suave); font-size: 14px; }
+.calculo-formula small.formula { color: var(--suave); }
+/* La ficha: nombre, qué hace y la fórmula con letras */
+.ficha { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--fb); border-left: 4px solid var(--fc); text-align: left; }
+.ficha-titulo { color: var(--fc); font-size: 17px; font-weight: 700; }
+.ficha-que { margin-top: 4px; color: var(--texto); font-size: 14px; }
+.ficha-formula { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 10px 0 4px; color: var(--fc); font-size: 20px; font-weight: 600; font-style: italic; }
+.ficha-formula .fraccion { font-style: italic; }
+.ficha-numeros { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: var(--fb); text-align: center; }
+.ficha-numeros .ficha-formula { font-size: 16px; font-style: normal; margin: 4px 0; }
+.ficha-numeros .fraccion { font-style: normal; }
+.ficha-resultado { color: var(--fc); font-size: 22px; font-weight: 700; }
+/* Una letra de la fórmula, en su recuadro */
+.simbolo { display: inline-block; min-width: 26px; margin-right: 6px; padding: 0 6px; border-radius: 7px; background: var(--color-suave); color: var(--color); font-size: 14px; font-weight: 700; font-style: italic; text-align: center; }
+/* Qué es cada letra: letra · nombre del dato · su número */
+.leyenda { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 4px; align-items: center; margin-top: 12px; font-size: 14px; }
+.leyenda-nombre { color: var(--texto); }
+.leyenda-valor { font-weight: 600; text-align: right; white-space: nowrap; }
+.leyenda-valor.falta { color: var(--peligro); }
+.dato-nombre small.usos { display: block; color: var(--suave); font-size: 12.5px; margin-top: 2px; }
+/* Las tarjetas para elegir fórmula en la calculadora */
+.calc-tarjetas { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.calc-tarjeta { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 10px; border: 2px solid transparent; border-radius: 12px; background: var(--fb); color: var(--fc); font-size: 15px; font-weight: 600; text-align: left; }
+.calc-tarjeta[aria-pressed="true"] { border-color: var(--fc); box-shadow: 0 0 0 1px var(--fc); }
+.calc-tarjeta-icono { font-size: 20px; }
+
+/* Datos y cantidades juntos: cada bloque, sus datos y debajo su resultado, con el color de su fórmula */
+.hoja .bloque { padding-bottom: 8px; }
+.hoja .bloque + .bloque, .hoja .bloque + .dato { border-top: 1px dashed var(--borde); padding-top: 4px; }
+.hoja .bloque .dato:not(.calculo) { border-bottom: 0; padding: 6px 0; }
+.hoja .resultado-bloque { margin: 4px -4px 0; padding: 8px 10px; border-radius: 10px; border-bottom: 0; border-left: 4px solid var(--fc); background: var(--fb); }
+.hoja .resultado-bloque .calculo-valor { color: var(--fc); font-size: 20px; }
+.hoja .resultado-bloque .calculo-formula .fraccion { color: var(--texto); opacity: .75; }
+/* Un número que no cuadra (comprobaciones de sentido común) */
+small.aviso-sentido { display: block; margin-top: 4px; padding: 5px 8px; border-radius: 8px; background: var(--aviso-fondo); color: var(--aviso-texto); font-size: 13px; line-height: 1.35; }
+small.aviso-sentido[hidden] { display: none; }
+.bloque-usa { display: block; color: var(--suave); font-size: 12.5px; padding: 2px 0; }
+.hoja .dato-nombre .simbolo { margin-right: 6px; }
+
+/* El editor de cantidades: cada una en su tarjeta, con su ficha y una fila por letra */
+.editor-calculo { margin-bottom: 10px; padding-top: 10px; padding-bottom: 10px; }
+.editor-formula { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.editor-calculo .ficha { margin-top: 8px; padding: 4px 10px; }
+.editor-calculo .ficha-formula { margin: 6px 0; font-size: 18px; }
+.hueco { margin-top: 10px; }
+.hueco-fila { display: flex; align-items: center; gap: 4px; font-size: 15px; margin-bottom: 4px; }
+.hueco-fila .hueco-rotulo { flex: 1; }
+.hueco-select { padding: 9px 10px; border-radius: 9px; font-size: 15px; }
+.hueco select:not(.campo) { padding: 8px 4px; border: 1px solid var(--borde); border-radius: 9px; background: var(--fondo); color: inherit; font: inherit; }
+.aviso-hueco { display: block; margin-top: 4px; padding: 6px 8px; border-radius: 8px; background: var(--aviso-fondo); color: var(--aviso-texto); font-size: 13px; }
+.parte-opcion { display: flex; align-items: center; gap: 6px; padding: 6px 0; font-size: 15px; }
+.parte-opcion input { width: 22px; height: 22px; }
+.editor-pie { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+/* El resultado de la cantidad mientras se escribe, con los números de ahora */
+.resultado-vivo { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding: 8px 12px; border-radius: 12px; border-left: 4px solid var(--fc); background: var(--fb); }
+.resultado-vivo:empty { display: none; }
+.vivo-cuenta .ficha-formula { margin: 0; font-size: 15px; font-style: normal; color: var(--texto); }
+.vivo-cuenta .fraccion { font-style: normal; }
+.vivo-valor { margin-left: auto; color: var(--fc); font-size: 21px; font-weight: 700; white-space: nowrap; }
+.vivo-falta { color: var(--suave); font-size: 13.5px; }
+/* Valor y unidad en una fila (el cuadro de un dato nuevo) */
+.valor-unidad { display: grid; grid-template-columns: 1fr 110px; gap: 8px; align-items: center; margin-top: 4px; }
+.dialogo .valor-unidad .campo { margin-top: 0; }
+.unidad-fija { font-size: 16px; color: var(--suave); padding-left: 4px; }
+.enlace { border: 0; background: none; padding: 6px 0; color: var(--color); font-size: 14px; text-decoration: underline; }
+.fila-form.sin-marco { border: 0; padding: 0; margin: 8px 0 0; background: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.chip { border: 1px solid var(--borde); border-radius: 14px; padding: 5px 10px; background: var(--tarjeta); color: var(--color); font-size: 13px; }
+.elegir-formula { margin-top: 12px; }
+
+/* Una fórmula como fracción: numerador, raya y denominador */
+.fraccion { display: inline-flex; flex-direction: column; align-items: stretch; text-align: center; vertical-align: middle; font-variant-numeric: tabular-nums; }
+.fraccion .num, .fraccion .den { padding: 1px 6px; }
+.fraccion .den { border-top: 1.5px solid currentColor; }
+.resultado-formula .fraccion { margin-top: 4px; }
+.fila-form small.todo { margin: 0; font-size: 13px; }
+.formula { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+
+/* Pasos */
+.paso { display: flex; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--borde); }
+.paso:last-child { border-bottom: 0; }
+.paso-numero {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 17px;
+  border: 2px solid var(--color);
+  background: none;
+  color: var(--color);
+  font-weight: 700;
+  padding: 0;
+}
+/* El rótulo de la fase que empieza en un paso */
+.fase { margin: 0 -12px; padding: 10px 12px; background: var(--color-suave); color: var(--color); font-weight: 700; font-size: 16px; }
+.fase:first-child { margin-top: -4px; border-radius: 13px 13px 0 0; }
+/* En Datos y Cantidades, la fila de antes de un rótulo de fase no lleva raya */
+.dato:has(+ .fase) { border-bottom: 0; }
+/* El contador de ciclos de un paso que se repite: "🔁 Ciclo 2 de 5  − ＋" */
+.ciclos { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--color-suave); font-weight: 600; }
+.ciclos span { flex: 1; }
+.ciclos button { width: 44px; height: 40px; border: 0; border-radius: 10px; background: var(--tarjeta); color: var(--color); font-size: 20px; font-weight: 700; }
+.ciclos button:disabled { opacity: .35; }
+.ciclos.ultimo { color: var(--ok); }
+.ciclos.pasado { background: var(--aviso-fondo); color: var(--aviso-texto); }
+.paso.hecho .paso-numero { background: var(--ok); border-color: var(--ok); color: #fff; }
+.paso.hecho .paso-texto { opacity: .5; }
+.paso-contenido { flex: 1; min-width: 0; }
+.cant { font-weight: 700; color: var(--color); white-space: nowrap; }
+.cant.error { color: var(--peligro); }
+.crono-boton, .boton {
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: var(--color);
+  color: var(--sobre-color);
+  font-weight: 600;
+}
+.crono-boton { margin-top: 8px; padding: 9px 14px; }
+.crono-boton.en-marcha { background: var(--color-suave); color: var(--texto); }
+.boton { display: block; width: 100%; margin-top: 10px; }
+.boton.secundario { background: var(--color-suave); color: var(--color); }
+.boton.peligro { background: var(--peligro); color: #fff; }
+.boton.discreto { background: none; color: var(--peligro); font-weight: 400; }
+.boton:disabled { opacity: .55; }
+.original { white-space: pre-wrap; font-size: 14px; color: var(--suave); margin-top: 8px; }
+
+/* El cuaderno: "🏁 Terminar fase" al final de cada fase de los pasos, los grupos y la bitácora */
+.terminar-fase { display: block; width: 100%; margin: 4px 0 12px; padding: 10px 12px; border: 1px dashed var(--color); border-radius: 12px; background: none; color: var(--color); font-weight: 600; font-size: 15px; }
+.terminar-fase:active { background: var(--color-suave); }
+.icono.pequeno { font-size: 18px; min-width: 40px; height: 40px; }
+.entrada { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--borde); }
+.entrada-texto { flex: 1; min-width: 0; }
+.entrada-tocar { display: block; width: 100%; background: none; border: 0; padding: 0; text-align: left; color: inherit; font: inherit; }
+.entrada-tocar b, .entrada-tocar small, .entrada-nota { display: block; }
+.entrada-tocar small { color: var(--suave); font-size: 14px; }
+.entrada-texto > b, .entrada-texto > small { display: block; }
+.entrada:last-child { border-bottom: 0; }
+.entrada-hora { flex: none; padding-top: 2px; font-weight: 700; color: var(--suave); font-variant-numeric: tabular-nums; }
+.entrada-nota { margin-top: 4px; white-space: pre-wrap; }
+.entrada-tocar small.por-confirmar { color: var(--aviso-texto); background: var(--aviso-fondo); display: inline-block; padding: 1px 6px; border-radius: 6px; margin-top: 2px; }
+/* Lo heredado del grupo del que salió, más apagado */
+.entrada.heredada { opacity: .6; }
+/* El árbol de las muestras: las fases en franjas, los grupos en líneas de color */
+.arbol-caja { overflow-x: auto; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 14px; padding: 6px 0; }
+.arbol { display: block; }
+.arbol-fila { fill: transparent; }
+.arbol-fila.par { fill: var(--color-suave); opacity: .5; }
+.arbol-fase { font-size: 13px; font-weight: 700; fill: var(--suave); }
+.arbol-nombre { font-size: 12px; font-weight: 700; }
+.arbol-muestras { font-size: 11px; fill: var(--suave); }
+/* Una vuelta atrás (repetir fases): arco de puntos con 🔁 */
+.arbol-vuelta-icono { font-size: 11px; }
+.arbol-grupo { cursor: pointer; }
+/* Con carpetas: su nombre arriba, una raya de puntos entre ellas y la línea gris propia de cada una */
+.arbol-carpeta { font-size: 12px; font-weight: 700; fill: var(--color); }
+.arbol-separa { stroke: var(--borde); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.arbol-tronco { stroke: #90a4ae; }
+/* El «puente» de una línea de lado: un borde del color del fondo, para que al pasar por encima de
+   otra línea se vea que no se tocan */
+.arbol-halo { stroke: var(--tarjeta); }
+.arbol-analisis { font-size: 11px; }
+/* Seguir el camino de un grupo: lo demás, aclarado */
+.arbol-seguir { margin: 0 0 6px; }
+.arbol.apagada [data-dueno]:not(.resaltada) { opacity: .15; }
+.arbol [data-dueno] { transition: opacity .2s; }
+.arbol-leyenda { margin: 6px 2px 0; color: var(--suave); font-size: 12px; line-height: 1.5; }
+/* Las disoluciones: una franja a la izquierda según si queda */
+.tarjeta.disolucion { border-left: 5px solid var(--ok); }
+.tarjeta.disolucion.estado-poca { border-left-color: #f9a825; }
+.tarjeta.disolucion.estado-gastada, .tarjeta.disolucion.estado-desechada { border-left-color: var(--borde); opacity: .7; }
+.elegir-para { margin-top: 4px; }
+/* Las notas de un cuaderno: una pestaña en el borde derecho y un panel que sale por la derecha */
+.pestana-notas { position: absolute; right: 0; top: 45%; z-index: 2; border: 0; border-radius: 10px 0 0 10px; padding: 12px 6px; background: var(--color); color: var(--sobre-color); box-shadow: -2px 2px 8px rgba(0, 0, 0, .25); }
+.pestana-notas span { writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; font-size: 14px; }
+.cajon-fondo { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0); transition: background .2s; }
+.cajon-fondo.abierto { background: rgba(0, 0, 0, .45); }
+.cajon { position: absolute; top: 0; right: 0; bottom: 0; width: min(88vw, 460px); display: flex; flex-direction: column; gap: 8px;
+  padding: calc(var(--arriba) + 10px) 12px calc(var(--abajo) + 12px); background: var(--tarjeta); box-shadow: -6px 0 18px rgba(0, 0, 0, .3);
+  transform: translateX(100%); transition: transform .2s ease-out; }
+.cajon-fondo.abierto .cajon { transform: none; }
+.cajon-cabecera { display: flex; align-items: center; gap: 6px; }
+.cajon-titulo { flex: 1; min-width: 0; }
+.cajon-titulo b, .cajon-titulo small { display: block; }
+.cajon-titulo b { font-size: 18px; }
+.cajon-titulo small { color: var(--suave); }
+.cajon .icono { color: var(--texto); }
+.notas-texto { flex: 1; width: 100%; resize: none; border: 1px solid var(--borde); border-radius: 12px; padding: 12px; background: var(--fondo); color: var(--texto); font: inherit; font-size: 16px; line-height: 1.45; }
+.notas-estado { color: var(--suave); min-height: 1.2em; }
+/* Varios cuadernos de una receta: los botones para cambiar y el que se está viendo */
+.cuadernos-elegir { margin-bottom: 4px; }
+.cuaderno-este { padding: 8px 10px; border-radius: 12px; background: var(--color-suave); }
+.cuaderno-este .carpeta-titulo b { font-size: 20px; display: block; }
+.cuaderno-receta { display: block; margin-top: 2px; color: var(--texto); font-size: 15px; }
+/* Cada grupo con el color de su línea en el árbol: franja a la izquierda y un punto junto al nombre */
+.tarjeta.grupo.con-color { border-left: 6px solid var(--gc); }
+.tarjeta.grupo.con-color h3::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 7px; border-radius: 50%; background: var(--gc); vertical-align: 1px; }
+/* Al marcar una disolución: su estado y cuánto queda, debajo */
+.opcion-dis { border-bottom: 1px solid var(--borde); }
+.opcion-dis .opcion-grupo { border-bottom: none; }
+.opcion-dis .dis-estado { padding: 0 0 10px 34px; }
+/* Algo de varios grupos a la vez: la nota y las fotos de cada grupo, debajo de su casilla */
+.opcion-dis .varios-grupo { padding: 0 0 10px 34px; }
+.opcion-dis .dis-estado .chips { margin: 0 0 6px; }
+/* El botón para abrir la receta del cuaderno */
+.cuaderno-receta.abrir-receta { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 10px; width: 100%; margin-top: 6px; padding: 8px 12px; border: 1px solid var(--borde); border-radius: 10px; background: var(--tarjeta); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.abrir-receta .flecha { color: var(--color); font-weight: 600; font-size: 14px; }
+/* Las carpetas de grupos: un marco con su nombre y su nota; dentro, sus grupos */
+.carpeta { border: 1px solid var(--borde); border-radius: 14px; padding: 8px 8px 2px; margin-bottom: 10px; background: var(--color-suave); }
+.carpeta.sin-carpeta { background: none; border-style: dashed; }
+.carpeta.sin-carpeta.sola { border: 0; padding: 0; }
+.carpeta-cabecera { display: flex; align-items: flex-start; gap: 6px; padding: 2px 4px 8px; }
+.carpeta-titulo { flex: 1; min-width: 0; color: var(--color); }
+.carpeta-nota { margin-top: 2px; font-size: 14px; color: var(--suave); font-style: italic; white-space: pre-wrap; }
+.lista-grupos { min-height: 8px; }
+/* Una carpeta vacía dice cómo meter grupos; la de «sin carpeta», solo mientras se arrastra */
+.carpeta-vacia { margin: 0 4px 8px; font-size: 13px; }
+.lista-grupos:has(> [data-id]) > .carpeta-vacia, .sin-carpeta .carpeta-vacia { display: none; }
+.carpetas.arrastrando-dentro .sin-carpeta .lista-grupos:not(:has(> [data-id])) > .carpeta-vacia { display: block; }
+.carpetas.arrastrando-dentro .sin-carpeta.sola { border: 1px dashed var(--borde); padding: 8px 8px 2px; }
+.botones-fila { display: flex; gap: 8px; }
+.botones-fila .boton { flex: 1; }
+/* Los grupos se arrastran manteniendo pulsado: sin seleccionar texto ni menú de copiar */
+.lista-grupos .grupo { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform .15s, box-shadow .15s; }
+.lista-grupos .grupo.arrastrando { transform: scale(1.03); box-shadow: 0 6px 18px rgba(0, 0, 0, .3); border-color: var(--color); position: relative; z-index: 1; }
+.grupo-muestras { font-weight: 400; color: var(--suave); font-size: 15px; }
+.grupo-estado { padding: 12px; }
+.grupo-estado p { margin: 2px 0; }
+.grupo-cuantas { font-size: 20px; font-weight: 700; }
+.acciones-grupo .boton { margin-top: 8px; }
+.etiqueta-campo { display: block; margin-top: 10px; }
+.etiqueta-campo > span { display: block; font-size: 14px; color: var(--suave); }
+.dialogo .etiqueta-campo .campo { margin-top: 4px; }
+/* Las fotos: miniaturas (se tocan para verlas en grande) y el visor */
+.miniaturas { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.miniatura { position: relative; width: 72px; height: 72px; padding: 0; border: 1px solid var(--borde); border-radius: 8px; overflow: hidden; background: var(--color-suave); }
+.miniatura img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.quitar-foto { position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; border: 0; border-radius: 12px; background: rgba(0, 0, 0, .6); color: #fff; font-size: 13px; }
+.selector-fotos .boton { margin-top: 12px; }
+/* La foto en grande: cabecera con el título, la foto (tocarla la amplía y se mueve con el dedo) */
+.visor { position: fixed; inset: 0; z-index: 20; background: #000; color: #eee; display: flex; flex-direction: column; padding: var(--arriba) 0 calc(var(--abajo) + 8px); }
+.visor-cabecera { display: flex; align-items: center; gap: 4px; padding: 8px 4px 8px 16px; }
+.visor-titulo { flex: 1; min-width: 0; }
+.visor-titulo b, .visor-titulo small { display: block; }
+.visor-titulo small { color: #aaa; font-size: 13px; }
+/* La foto en grande: se amplía y se mueve con los dedos (hacerZoom, con transform); el navegador no
+   hace nada con los gestos (touch-action: none) */
+.visor-marco { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; }
+.visor-marco img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; will-change: transform; user-select: none; -webkit-user-drag: none; }
+.visor-ayuda { color: #888; font-size: 13px; text-align: center; padding-top: 6px; }
+/* El recopilatorio de fotos: dos por fila, con su título; el círculo marca las que se comparan */
+.galeria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.foto-tarjeta, .comp-tarjeta { position: relative; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; overflow: hidden; }
+.foto-tarjeta.elegida { border-color: var(--color); box-shadow: 0 0 0 2px var(--color); }
+.foto-imagen { display: block; width: 100%; aspect-ratio: 4 / 3; padding: 0; border: 0; background: #000; }
+.foto-imagen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.foto-marca { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border-radius: 16px; border: 2px solid #fff; background: rgba(0, 0, 0, .35); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.foto-marca[aria-pressed="true"] { background: var(--color); }
+.foto-pie { padding: 6px 8px 8px; }
+.foto-pie b, .foto-pie small { display: block; overflow-wrap: anywhere; }
+.foto-pie b { font-size: 14px; }
+.foto-pie small { color: var(--suave); font-size: 12px; }
+/* De quién es una foto: el color de su grupo (el del árbol) en el borde y un punto junto al nombre */
+.foto-tarjeta.con-color, .comp-tarjeta.con-color { border-top: 5px solid var(--gc); }
+.punto-grupo { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; vertical-align: 0; }
+/* Las fotos por sesiones: un bloque plegable por apunte */
+.foto-sesion { margin: 12px 0; padding: 8px 10px 10px; border: 1px solid var(--borde); border-radius: 14px; background: var(--color-suave); }
+.foto-sesion.con-color { border-left: 6px solid var(--gc); }
+.foto-sesion summary { cursor: pointer; list-style-position: outside; margin-left: 16px; }
+.foto-sesion summary b { display: block; font-size: 15px; }
+.foto-sesion summary small { color: var(--suave); font-size: 13px; }
+.foto-sesion-nota { margin: 6px 0 0; font-size: 14px; white-space: pre-wrap; }
+/* Fotos más pequeñas (lo pidió el usuario): tres por fila; en la pantalla ancha, más */
+.galeria { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.galeria .foto-pie { padding: 4px 5px 6px; }
+.galeria .foto-pie b { font-size: 12px; }
+.galeria .foto-pie small { font-size: 11px; }
+.galeria .foto-marca { width: 26px; height: 26px; top: 4px; right: 4px; font-size: 13px; }
+.foto-apartado { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; margin: 10px 0 0; }
+.foto-apartado h4 { margin: 0; font-size: 14px; }
+/* Editar la sesión y marcar de una vez todas sus fotos (o las de un apartado, o todas las que se ven) */
+.sesion-acciones { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; }
+.marcar-varias { border: 1px solid var(--borde); border-radius: 16px; background: var(--tarjeta); color: var(--color); font: inherit; font-size: 13px; padding: 4px 10px; }
+.marcar-varias[aria-pressed="true"] { background: var(--color); color: var(--sobre-color); border-color: var(--color); }
+.boton.discreto.editar-sesion { display: block; width: auto; margin: 4px 0 0; padding: 4px 0; font-size: 14px; color: var(--color); text-align: left; }
+.album-nota { margin: 4px 0 8px; }
+/* Ver por sesiones o por días, y los filtros */
+.filtros-fotos { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 4px 0 6px; }
+.filtro-fotos { display: flex; flex-direction: column; flex: 1 1 120px; min-width: 0; font-size: 13px; color: var(--suave); }
+.filtro-fotos .campo { padding: 6px 8px; font-size: 14px; }
+/* Apartados de fotos al tocar un apunte, y en la bitácora */
+.apartado-editor { margin: 8px 0; padding: 6px 8px; border: 1px solid var(--borde); border-radius: 10px; }
+.apartado-cabecera { display: flex; gap: 6px; align-items: center; }
+.apartado-cabecera .campo { flex: 1; min-width: 0; }
+.miniatura.con-apartado { display: inline-flex; flex-direction: column; height: auto; width: 96px; overflow: visible; }
+.miniatura.con-apartado img { height: 72px; border-radius: 8px; }
+.mover-foto { max-width: 96px; font-size: 12px; margin-top: 2px; }
+.entrada-apartado { display: block; margin-top: 6px; color: var(--suave); }
+/* En la foto en grande: aumento y zona */
+.visor-info { padding: 0 12px 8px; }
+.visor-info .chips { margin: 0 0 6px; }
+.visor-info .chip { background: #222; color: #ddd; border-color: #444; }
+.visor-info .chip[aria-pressed="true"] { background: #9fa8da; color: #000; border-color: #9fa8da; }
+.visor-info .chips-rotulo { color: #aaa; }
+.visor-zona { border: 0; background: none; color: #bbb; font: inherit; font-size: 14px; padding: 2px 0; }
+/* La barra de abajo de Fotos: pegada al borde de abajo del todo (el panel deja 24 px + la zona del
+   sistema de margen abajo, y con bottom: 0 quedaba ese hueco, por el que se veían pasar las fotos) */
+.barra-comparar { position: sticky; bottom: calc(-24px - var(--abajo)); margin-bottom: calc(-24px - var(--abajo)); padding: 6px 0 calc(var(--abajo) + 8px); background: var(--fondo); display: flex; flex-wrap: wrap; gap: 6px; box-shadow: 0 -6px 8px -6px rgba(0, 0, 0, .25); }
+.barra-comparar .boton { flex: 1 1 0; width: auto; min-width: 0; margin: 0; padding: 8px 6px; font-size: 14px; }
+.barra-comparar .boton:first-child { flex-basis: 100%; padding: 11px 8px; font-size: 16px; }
+/* Comparar: 1, 2 o 3 por fila; se mueven arrastrando ✥ o con ◀ ▶ */
+.chips-rotulo { align-self: center; color: var(--suave); font-size: 14px; margin-right: 2px; }
+.comparar { display: grid; grid-template-columns: repeat(var(--columnas, 2), minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.comp-barra { display: flex; align-items: center; gap: 2px; padding: 2px; background: var(--color-suave); }
+.comp-barra button { flex: 1; min-width: 0; height: 34px; border: 0; border-radius: 8px; background: none; color: var(--color); font-size: 15px; }
+.comp-barra button:disabled { opacity: .3; }
+/* Cada foto al comparar se amplía ahí mismo (hacerZoom). Sin ampliar, un dedo puede mover la página
+   arriba y abajo (pan-y); ampliada, los dedos son para la foto */
+.comp-marco { position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: #000; touch-action: pan-y; }
+.comp-marco.ampliada { touch-action: none; }
+/* Comparar: toda la pantalla se desliza, también la barra del título; y cada foto cabe en la
+   altura de la pantalla (con el móvil en horizontal) */
+.panel.desliza { display: block; overflow-y: auto; }
+.panel.desliza .panel-cuerpo { overflow: visible; }
+.comp-marco { max-height: calc(100vh - 56px); max-height: calc(100dvh - 56px); margin: 0 auto; }
+.comp-marco img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; }
+.comp-barra .asa { touch-action: none; cursor: grab; font-size: 18px; }
+.comp-tarjeta.arrastrando { opacity: .6; box-shadow: 0 0 0 2px var(--color); }
+.bitacora { margin-top: 12px; }
+.bitacora .fase:first-letter { text-transform: uppercase; }
+.chip[aria-pressed="true"] { background: var(--color); border-color: var(--color); color: var(--sobre-color); }
+.elegir-grupo { margin-top: 4px; }
+.opcion-grupo { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--borde); }
+.opcion-grupo input[type="radio"] { margin-top: 4px; width: 20px; height: 20px; flex: none; }
+.grupo-nuevo { flex: 1; min-width: 0; }
+.dialogo .grupo-nuevo .campo { margin-top: 6px; }
+.opcion-grupo b, .opcion-grupo small { display: block; }
+.opcion-grupo small { color: var(--suave); font-size: 13px; }
+
+/* Lo que se estaba mirando, al abrir el formulario: se ilumina un momento */
+.resaltado { animation: resaltar 1.8s ease-out; }
+@keyframes resaltar { 0%, 40% { box-shadow: 0 0 0 3px var(--color); } 100% { box-shadow: 0 0 0 3px transparent; } }
+
+/* Formulario */
+/* Las subfases: en la receta, un rótulo más pequeño con 🧪 (disolución) o 🧫 (muestras); en el
+   editor, su nombre y los dos botones para elegir */
+.subfase { margin: 8px 0 0; padding: 6px 10px; border-left: 4px solid var(--color); font-weight: 600; font-size: 15px; color: var(--color); }
+.subfase.parte-disolucion, .subfase-editor.parte-disolucion { border-left-color: #00897b; }
+.subfase.parte-disolucion { color: #00796b; }
+.terminar-fase.parte-disolucion { border-color: #00897b; color: #00796b; }
+.subfase-editor { margin: 10px 0 6px 10px; padding: 6px 0 2px 10px; border-left: 4px solid var(--color); }
+.subfase-fila { display: flex; align-items: center; gap: 6px; }
+.subfase-fila .campo { flex: 1; font-weight: 600; }
+.subfase-fila .quitar { flex: none; width: 40px; height: 40px; border: 0; background: none; color: var(--suave); font-size: 18px; }
+.subfase-editor .chips { margin: 6px 0 0; }
+.enlace.todo { grid-column: 1 / 4; justify-self: start; }
+/* El título de una fase, encima de sus pasos (se puede cambiar; ✕ lo quita) */
+.fase-editor { display: flex; align-items: center; gap: 6px; margin: 18px 0 8px; }
+.fase-editor:first-child { margin-top: 4px; }
+.fase-editor .campo { flex: 1; font-weight: 700; font-size: 17px; background: var(--color-suave); color: var(--color); border-color: transparent; }
+.fase-editor .quitar { flex: none; width: 40px; height: 40px; border: 0; background: none; color: var(--suave); font-size: 18px; }
+.fila-form { border: 1px solid var(--borde); border-radius: 12px; background: var(--tarjeta); padding: 8px; margin-bottom: 8px; display: grid; grid-template-columns: 1fr 1fr 44px; gap: 6px; }
+.fila-form .campo { padding: 9px 10px; border-radius: 9px; font-size: 16px; }
+.fila-form .ancho { grid-column: 1 / 3; }
+.fila-form .todo { grid-column: 1 / 4; }
+.fila-form .quitar { border: 0; background: none; font-size: 18px; }
+/* Los avisos de «le toca» (versión 86): arriba de los cuadernos y de cada cuaderno */
+.avisos-toca { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; }
+.aviso-toca { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-left: 4px solid var(--color); border-radius: 12px; background: var(--color-suave); color: var(--texto); font: inherit; font-size: 15px; }
+.aviso-toca.hoy { border-left-color: #e08a00; background: var(--aviso-fondo); color: var(--aviso-texto); }
+.aviso-toca.tarde { border-left-color: var(--peligro); background: var(--aviso-fondo); color: var(--aviso-texto); }
+/* Buscar en la bitácora */
+.buscar-bitacora { margin: 8px 0; }
+.resultado-busqueda { margin: 4px 0 8px; }
+/* Lo que la app propone al leer un paso (una cantidad como dato) */
+.sugerencias-paso { display: flex; flex-wrap: wrap; gap: 6px; }
+.sugerencias-paso:empty { display: none; }
+.chip.sugerencia { border-style: dashed; font-size: 13.5px; padding: 5px 10px; }
+/* Los atajos del formulario */
+.atajos-nota { margin-top: 14px; }
+.atajos { grid-template-columns: 1fr 1fr 1fr; margin-bottom: 10px; }
+.atajos .calc-tarjeta { flex-direction: column; justify-content: center; text-align: center; font-size: 13.5px; min-height: 64px; }
+.etiqueta { display: block; font-size: 14px; color: var(--suave); margin: 12px 0 4px; }
+
+/* Preguntas y avisos */
+.dialogo-fondo { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .5); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.dialogo { background: var(--tarjeta); border-radius: 18px; padding: 20px; width: 100%; max-width: 420px; max-height: 90vh; overflow-y: auto; }
+.dialogo-texto { font-size: 18px; font-weight: 600; }
+.dialogo-detalle { color: var(--suave); margin-top: 8px; font-size: 15px; white-space: pre-line; }
+.dialogo .campo { margin-top: 12px; }
+.dialogo-botones { display: flex; gap: 10px; margin-top: 8px; }
+#aviso {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--abajo) + 84px);
+  /* Por debajo de los cuadros de pregunta (30), para no tapar sus botones; por encima de los paneles */
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #23252f;
+  color: #fff;
+  font-size: 15px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .4);
+}
+#aviso span { flex: 1; }
+#aviso button { border: 0; background: none; color: #9fa8da; font-weight: 700; padding: 6px; }
+
+/* En una pantalla ancha (el navegador del PC): el contenido en una columna centrada, como en el
+   móvil pero más cómoda; las fotos, más por fila, y la comparación, a todo lo ancho */
+@media (min-width: 900px) {
+  #principal, .panel-cuerpo { width: 100%; max-width: 860px; margin: 0 auto; }
+  .cabecera, .panel-cabecera { padding-left: max(12px, calc((100% - 860px) / 2)); padding-right: max(12px, calc((100% - 860px) / 2)); }
+  .panel-cuerpo:has(.comparar) { max-width: none; padding-left: 24px; padding-right: 24px; }
+  .galeria { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  #aviso { left: 50%; right: auto; width: 600px; transform: translateX(-50%); bottom: 24px; }
+  .flotante { right: max(16px, calc((100% - 860px) / 2)); }
+  .dialogo { max-width: 520px; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #14151b;
+    --tarjeta: #1f2029;
+    --texto: #ececf3;
+    --suave: #a3a6b8;
+    --borde: #33354a;
+    --color: #9fa8da;
+    --sobre-color: #14183a;
+    --color-suave: #2a2d47;
+    --ok: #66bb6a;
+    --aviso-fondo: #3d3209;
+    --aviso-texto: #ffe082;
+    --peligro: #ef9a9a;
+  }
+  .cabecera, .panel-cabecera { background: #1f2029; color: var(--texto); border-bottom: 1px solid var(--borde); }
+  .boton.peligro { color: #2b0808; }
+}
+
+/* El informe de un cuaderno (versión 86): en la app se ve como una hoja de papel (blanca también en
+   modo oscuro), y al imprimir o guardar como PDF solo sale él (#impresion) */
+.informe-hoja { margin-top: 12px; padding: 16px; border-radius: 12px; background: #fff; color: #1b1c22; box-shadow: 0 1px 4px rgba(0, 0, 0, .15); overflow-x: auto; }
+.informe { font-size: 14px; line-height: 1.45; color: #1b1c22; }
+.informe h1 { font-size: 22px; margin: 0 0 4px; }
+.informe h2 { font-size: 17px; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #3949ab; color: #283593; }
+.informe h3 { font-size: 15px; margin: 14px 0 6px; }
+.informe-dia > h3::first-letter { text-transform: uppercase; }
+.informe p { margin: 2px 0; }
+.informe-meta { color: #5b5e6e; font-size: 12.5px; }
+.informe-nota { font-style: italic; }
+.informe-texto { white-space: pre-wrap; }
+.informe-tabla { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+.informe-tabla th, .informe-tabla td { border: 1px solid #d5d7e2; padding: 4px 6px; text-align: left; vertical-align: top; }
+.informe-tabla th { background: #eef0fa; }
+.informe-numero { text-align: right; white-space: nowrap; font-weight: 600; }
+.informe-color { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; vertical-align: baseline; }
+.informe-hitos { margin: 6px 0; font-size: 13px; }
+.informe-hitos ul { margin: 2px 0 0; padding-left: 18px; }
+.informe-arbol svg { max-width: 100%; height: auto; }
+.informe-arbol .arbol-caja { overflow: visible; }
+.informe-disolucion { margin-bottom: 10px; break-inside: avoid; }
+.informe-dia { break-inside: auto; }
+.informe-entrada { margin: 6px 0 10px; padding-left: 8px; border-left: 3px solid var(--gc, #c5c8d8); }
+.informe-titular { font-size: 14px; }
+.informe-hora { color: #5b5e6e; font-variant-numeric: tabular-nums; }
+.informe-apartado { margin-top: 6px; font-weight: 600; font-size: 13px; }
+.informe-fotos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 6px 0; }
+.informe-foto { margin: 0; break-inside: avoid; }
+.informe-foto img { display: block; width: 100%; height: auto; max-height: 9cm; object-fit: contain; background: #f2f3f7; border-radius: 4px; }
+.informe-foto figcaption { font-size: 11.5px; color: #5b5e6e; margin-top: 2px; }
+#impresion { display: none; }
+@media print {
+  @page { size: A4; margin: 15mm 14mm; }
+  html, body.imprimiendo { height: auto !important; overflow: visible !important; }
+  body.imprimiendo { background: #fff !important; }
+  body.imprimiendo > *:not(#impresion) { display: none !important; }
+  body.imprimiendo #impresion { display: block; }
+  #impresion .informe h2 { break-after: avoid; }
+  #impresion .informe-entrada { break-inside: avoid; }
+}

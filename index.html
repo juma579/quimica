@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Química</title>
+  <!-- Para instalarla desde la web (GitHub Pages: iPhone, o un Android sin la APK) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#3949ab">
+  <link rel="icon" href="icono.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="iconos/icono-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Química">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <!-- La pantalla principal: los cuadernos (lo pidió el usuario: «que el cuaderno sea la página
+       principal y se intercambie el puesto con recetas»). Las recetas, con 📋 (y se vuelve con atrás
+       o con 📓). Lo demás (cuaderno, detalle, formulario, ajustes, preguntas) lo pone app.js por
+       encima, en paneles que se cierran con el botón atrás del móvil -->
+  <header class="cabecera">
+    <h1 id="titulo-principal">📓 Cuadernos</h1>
+    <button id="b-recetas" class="icono" aria-label="Recetas">📋</button>
+    <button id="b-cuaderno" class="icono" aria-label="Cuadernos" hidden>📓</button>
+    <button id="b-calculadora" class="icono" aria-label="Calculadora">🧮</button>
+    <button id="b-ajustes" class="icono" aria-label="Ajustes">⚙️</button>
+  </header>
+  <div id="cronometros" hidden></div>
+  <main id="principal">
+    <div id="vista-cuadernos"></div>
+    <div id="vista-recetas" hidden>
+      <input id="buscar" type="search" placeholder="🔍 Buscar receta…" autocomplete="off">
+      <div id="lista-recetas"></div>
+      <p id="sin-resultados" class="nota" hidden>No hay ninguna receta con eso.</p>
+      <div id="vacio" hidden>
+        <p class="vacio-dibujo">⚗️</p>
+        <p>Aún no hay recetas.</p>
+        <p class="nota">Pulsa <b>＋ Nueva receta</b>, pega el texto de un procedimiento y Gemini lo convierte en una receta con sus pasos, sus cronómetros y sus cuentas.</p>
+      </div>
+    </div>
+  </main>
+  <button id="b-nueva" class="flotante">＋ Nuevo cuaderno</button>
+  <div id="aviso" hidden></div>
+
+  <script src="version.js"></script>
+  <script src="quimica.js"></script>
+  <script src="ia.js"></script>
+  <script src="cuaderno.js"></script>
+  <script src="fotos.js"></script>
+  <script src="sincronizar.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

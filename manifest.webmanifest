@@ -1,0 +1,16 @@
+{
+  "name": "Química",
+  "short_name": "Química",
+  "description": "Recetas de laboratorio con pasos, cronómetros y cuentas, y el cuaderno de las muestras",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f4f9",
+  "theme_color": "#3949ab",
+  "icons": [
+    { "src": "iconos/icono-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "iconos/icono-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icono.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

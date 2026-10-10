@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 18 72 72">
+  <!-- El icono de la app para la web (iPhone, navegador): el mismo matraz que el de Android
+       (android/app/src/main/res/drawable/ic_quimica.xml) sobre el azul de la app -->
+  <rect x="18" y="18" width="72" height="72" fill="#3949AB"/>
+  <path fill="#FFFFFF" d="M46,29 L62,29 Q63.5,29 63.5,30.5 Q63.5,32 62,32 L60,32 L60,46.5 L73,71.5 Q76,78.5 69,79 L39,79 Q32,78.5 35,71.5 L48,46.5 L48,32 L46,32 Q44.5,32 44.5,30.5 Q44.5,29 46,29 Z"/>
+  <path fill="#7986CB" d="M43.5,61 L64.5,61 L70,72 Q71.5,75.5 68,76 L40,76 Q36.5,75.5 38,72 Z"/>
+  <circle fill="#FFFFFF" cx="50" cy="69" r="2.6"/>
+  <circle fill="#FFFFFF" cx="58.5" cy="66" r="1.7"/>
+</svg>
