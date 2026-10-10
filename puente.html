@@ -75,7 +75,7 @@
         try { info = JSON.parse(decodeURIComponent(resp.headers.get('x-foto') || '%7B%7D')); } catch { /* sin datos */ }
         traidas.push({ id, blob: await resp.blob(), nombre: info.nombre, ancho: info.ancho, alto: info.alto, fecha: info.fecha });
       }
-      contestar({ tipo: 'quimica-resultado', ok: true, estado: r.estado, fotos: traidas, enviadas: mandar.length });
+      contestar({ tipo: 'quimica-resultado', ok: true, estado: r.estado, fotos: traidas, enviadas: mandar.length, usuario: hola.usuario || '' });
       decir('✅', 'Sincronizado con Química PC', 'Esta ventana se cierra sola. Si no, ciérrala y vuelve a la app.');
     } catch (err) {
       const mensaje = err && (err.name === 'TimeoutError' || err.name === 'TypeError') ? 'El PC no contesta. Mira que Química PC siga abierto y el móvil en la misma wifi' : String((err && err.message) || err);

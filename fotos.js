@@ -6,7 +6,18 @@
 //   Fotos.guardar(foto), Fotos.leer(id) → foto | null, Fotos.borrar(id)
 (function () {
   'use strict';
-  const BASE = 'quimica-fotos';
+  // Cada usuario del móvil (versión 112) tiene su propia base de fotos. El primero (o si no hay usuarios)
+  // sigue con «quimica-fotos»: así las fotos de antes se quedan donde estaban, sin migrar nada.
+  // El usuario activo está en localStorage `quimica.usuarios` ({ activo, lista }); al cambiar de usuario
+  // se recarga la página, así que esto se mira una sola vez
+  const nombreDeBase = () => {
+    try {
+      const u = JSON.parse(localStorage.getItem('quimica.usuarios') || 'null');
+      if (u && typeof u.activo === 'string' && /^[a-z0-9]{2,20}$/i.test(u.activo) && u.activo !== 'u1') return `quimica-fotos-${u.activo}`;
+    } catch { /* sin usuarios: la de siempre */ }
+    return 'quimica-fotos';
+  };
+  const BASE = nombreDeBase();
   const ALMACEN = 'fotos';
   const LADO = 2000;
 
@@ -99,5 +110,5 @@
     return { id: `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, blob, nombre: archivo.name || 'foto', ancho: lienzo.width, alto: lienzo.height, fecha: Date.now() };
   };
 
-  window.Fotos = { convertir, guardar, leer, borrar, ids, esTiff };
+  window.Fotos = { convertir, guardar, leer, borrar, ids, esTiff, base: BASE };
 })();

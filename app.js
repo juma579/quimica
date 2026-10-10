@@ -4167,7 +4167,7 @@
   };
   const pedirPC = async (base, codigo, ruta, opciones = {}) => {
     const r = await fetch(`${base}${ruta}`, { ...opciones, headers: { 'x-codigo': codigo, ...(opciones.headers || {}) }, signal: AbortSignal.timeout(opciones.espera || 15000) });
-    if (r.status === 403) throw new Error('El código no es el del PC');
+    if (r.status === 403) throw new Error('El código no es el del PC. Si en el PC usas otro usuario, cambia al de este móvil (o vuelve a conectar con el QR del usuario que quieras)');
     // (el PC bloquea un rato tras 5 códigos equivocados seguidos: versión 96)
     if (r.status === 429) throw new Error(`Demasiados intentos con un código equivocado: el PC no contesta durante ${r.headers.get('Retry-After') || 60} s. Revisa el código`);
     if (!r.ok) throw new Error(`El PC ha contestado ${r.status}`);
@@ -4212,6 +4212,11 @@
     return S.COLECCIONES.filter((c) => antes[c] !== S.huella(despues[c]));
   };
 
+  // El nombre del usuario del PC con el que está conectado este usuario del móvil (para enseñarlo en Ajustes)
+  const guardarUsuarioDelPC = (nombre) => {
+    const c = leer('quimica.pc', null);
+    if (c && typeof nombre === 'string' && c.usuario !== nombre && !(enElPC && pcVisto)) guardar('quimica.pc', { ...c, usuario: nombre });
+  };
   let sincronizando = false;
   let otraVez = false;
   let pcAlDia = null; // { base, fecha }: el programa del PC sabe guardar todas las colecciones de aquí
@@ -4229,6 +4234,7 @@
       // nueva no conocería lo nuevo (pasó con las disoluciones). Si no, no se sincroniza
       if (!pcAlDia || pcAlDia.base !== pc.base || Date.now() - pcAlDia.fecha > 60000) {
         const hola = await (await pedirPC(pc.base, pc.codigo, '/api/hola', { espera: 6000 })).json();
+        guardarUsuarioDelPC(hola.usuario);
         const sabe = Array.isArray(hola.colecciones) ? hola.colecciones : [];
         const falta = S.COLECCIONES.filter((c) => !sabe.includes(c));
         if (falta.length) throw new Error('Química PC está desactualizado: en el PC, cierra su ventana y vuelve a abrirlo (doble clic en «Quimica PC»). Hasta entonces no se sincroniza, para no perder nada');
@@ -4378,6 +4384,7 @@
           }
           guardar('quimica.pc-ultima', { fecha: Date.now(), huella: S.huella(datosLocales()) });
           localStorage.removeItem('quimica.pc-pendiente');
+          guardarUsuarioDelPC(e.data.usuario);
           estadoPC = { ok: true, fecha: Date.now(), cambios: cambiadas.length, fotos };
           if (cambiadas.length) {
             pintarLista();
@@ -4426,18 +4433,130 @@
   const conectarPC = async (direccion, codigo) => {
     const d = direccion.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
     const conPuerto = /:\d+$/.test(d) ? d : `${d}:8765`;
+    let usuarioPC = '';
     try {
       const r = await (await pedirPC(`http://${conPuerto}`, codigo.trim(), '/api/hola', { espera: 6000 })).json();
       if (r.app !== 'quimica-pc') throw new Error('Ahí no está Química PC');
+      usuarioPC = typeof r.usuario === 'string' ? r.usuario : '';
     } catch (e) {
       avisar(e.name === 'TimeoutError' || e.name === 'TypeError'
         ? 'No se encuentra el PC. Mira que Química PC esté abierto, que los dos estéis en la misma wifi y la dirección.'
         : e.message);
       return false;
     }
-    guardar('quimica.pc', { direccion: conPuerto, codigo: codigo.trim() });
+    // Si este usuario ya tiene datos y es una conexión nueva, que sepa con qué usuario del PC se unen
+    const ya = leer('quimica.pc', null);
+    if (!(ya && ya.direccion === conPuerto) && !(enElPC && pcVisto) && !await confirmarUnion(usuarioPC)) return false;
+    guardar('quimica.pc', { direccion: conPuerto, codigo: codigo.trim(), usuario: usuarioPC });
     await sincronizar({ avisarFallo: true });
     return true;
+  };
+
+  // ─── Usuarios del móvil (versión 112, el usuario: «que ambos tengan usuarios, tanto móvil como app») ───
+  // Cada usuario tiene lo suyo: recetas, cuaderno, fotos, pasos marcados y su conexión con el PC. Lo que es
+  // del aparato (la clave de Gemini, cómo se ve) lo comparten. Cómo: el usuario activo vive en las claves de
+  // siempre (`quimica.recetas`…) y los demás, guardados en `quimica.u.<id>`; al cambiar se intercambian y se
+  // recarga la página. Las fotos van en una base de IndexedDB por usuario (fotos.js). El registro:
+  // `quimica.usuarios` = { activo, lista: [{ id, nombre }] }; el primero, `u1`, sigue con `quimica-fotos`.
+  const DEL_USUARIO = ['quimica.recetas', 'quimica.cuaderno', 'quimica.sincro', 'quimica.hechos', 'quimica.ciclos', 'quimica.donde',
+    'quimica.pagina-receta', 'quimica.cuaderno-actual', 'quimica.calculadora', 'quimica.preparan', 'quimica.cronometros',
+    'quimica.pc', 'quimica.pc-ultima', 'quimica.pc-pendiente', 'quimica.pc-datos-id', 'quimica.borrador-receta', 'quimica.borrador',
+    'quimica.antes-de-sincronizar', 'quimica.antes-de-recuperar', 'quimica.antes-de-cambiar-de-usuario'];
+  const leerUsuarios = () => {
+    const r = leer('quimica.usuarios', null);
+    const lista = r && Array.isArray(r.lista)
+      ? r.lista.filter((u) => u && /^[a-z0-9]{2,20}$/i.test(u.id) && typeof u.nombre === 'string' && u.nombre.trim()).map((u) => ({ id: u.id, nombre: u.nombre.trim().slice(0, 40) }))
+      : [];
+    if (!lista.length) lista.push({ id: 'u1', nombre: 'Mi usuario' });
+    return { activo: lista.some((u) => u.id === (r && r.activo)) ? r.activo : lista[0].id, lista };
+  };
+  const guardarUsuarios = (u) => guardar('quimica.usuarios', u);
+  const usuarioDeAhora = () => { const u = leerUsuarios(); return u.lista.find((x) => x.id === u.activo); };
+  const baseDeFotos = (id) => (id === 'u1' ? 'quimica-fotos' : `quimica-fotos-${id}`);
+  // Lo de un usuario que no es el activo (para enseñar cuánto tiene)
+  const resumenDe = (id) => {
+    try {
+      const b = JSON.parse(localStorage.getItem(`quimica.u.${id}`) || '{}');
+      const rs = JSON.parse(b['quimica.recetas'] || '[]');
+      const c = JSON.parse(b['quimica.cuaderno'] || '{}');
+      const n = (Array.isArray(rs) ? rs.length : 0);
+      const a = Array.isArray(c.entradas) ? c.entradas.length : 0;
+      return n || a ? `${n} ${n === 1 ? 'receta' : 'recetas'} · ${a} ${a === 1 ? 'apunte' : 'apuntes'}` : 'vacío';
+    } catch { return ''; }
+  };
+  // Cambia de usuario: guarda lo del de ahora en su cajón, saca lo del otro y recarga
+  const pasarAUsuario = (id) => {
+    const u = leerUsuarios();
+    if (id === u.activo || !u.lista.some((x) => x.id === id)) return false;
+    const dep = {};
+    for (const k of DEL_USUARIO) { const v = localStorage.getItem(k); if (v !== null) dep[k] = v; }
+    try { localStorage.setItem(`quimica.u.${u.activo}`, JSON.stringify(dep)); } catch { avisar('No hay sitio en el móvil para cambiar de usuario'); return false; }
+    for (const k of DEL_USUARIO) localStorage.removeItem(k);
+    let otro = {};
+    try { otro = JSON.parse(localStorage.getItem(`quimica.u.${id}`) || '{}') || {}; } catch { otro = {}; }
+    for (const [k, v] of Object.entries(otro)) if (DEL_USUARIO.includes(k) && typeof v === 'string') localStorage.setItem(k, v);
+    localStorage.removeItem(`quimica.u.${id}`);
+    guardarUsuarios({ activo: id, lista: u.lista });
+    location.reload();
+    return true;
+  };
+  // Si este usuario ya tiene datos y se va a conectar con un PC, que lo sepa: se unirán con los del usuario del PC
+  const confirmarUnion = async (usuarioPC) => {
+    const c = leerCuaderno();
+    if (!recetas.length && !c.grupos.length && !c.entradas.length) return true;
+    const yo = usuarioDeAhora().nombre;
+    return preguntar({ texto: 'Este usuario ya tiene datos',
+      detalle: `«${yo}» tiene ${recetas.length} ${recetas.length === 1 ? 'receta' : 'recetas'} y ${c.entradas.length} ${c.entradas.length === 1 ? 'apunte' : 'apuntes'} en este móvil. Al conectar se unirán con los ${usuarioPC ? `del usuario «${usuarioPC}» del PC` : 'del usuario que esté activo en el PC'}: cada lado recibe lo del otro. Si no es el que quieres, cambia de usuario antes (aquí o en el PC).`,
+      si: 'Unir', no: 'Cancelar' });
+  };
+  const abrirUsuariosMovil = () => {
+    const { cuerpo } = abrirPanel('👤 Usuarios de este móvil');
+    const nombrar = async (texto, valor) => {
+      const n = await preguntar({ texto, campo: { value: valor || '', placeholder: 'Nombre', 'aria-label': 'Nombre del usuario', maxlength: 40 }, si: 'Guardar', no: 'Cancelar' });
+      return typeof n === 'string' && n.trim() ? n.trim().slice(0, 40) : null;
+    };
+    const pintar = () => {
+      const u = leerUsuarios();
+      poner(cuerpo,
+        h('p', { class: 'nota', text: 'Cada usuario tiene sus recetas, su cuaderno, sus fotos y su conexión con el PC. La clave de Gemini es del móvil: la usan todos. Al cambiar, la app se recarga. Nada se borra.' }),
+        u.lista.map((x) => h('div', { class: 'caja' },
+          h('p', {}, h('b', { text: `${x.id === u.activo ? '✅ ' : ''}${x.nombre}` }), x.id === u.activo ? ' · el que usas' : ''),
+          h('p', { class: 'nota', text: x.id === u.activo ? `${recetas.length} ${recetas.length === 1 ? 'receta' : 'recetas'} · ${leerCuaderno().entradas.length} apuntes` : resumenDe(x.id) }),
+          x.id !== u.activo && h('button', { class: 'boton', type: 'button', text: 'Usar este usuario', onclick: async () => {
+            const enMarcha = leer('quimica.cronometros', []);
+            if (Array.isArray(enMarcha) && enMarcha.length && !await preguntar({ texto: 'Hay cronómetros en marcha', detalle: 'Seguirán sonando, pero no los verás hasta que vuelvas a este usuario.', si: 'Cambiar igualmente', no: 'Cancelar' })) return;
+            await sincronizar(); // lo que falte, al PC, antes de irse (en la web solo se pasa a mano)
+            pasarAUsuario(x.id);
+          } }),
+          h('button', { class: 'boton discreto', type: 'button', text: '✏️ Cambiar el nombre', onclick: async () => {
+            const n = await nombrar('Nombre del usuario', x.nombre);
+            if (!n) return;
+            const v = leerUsuarios();
+            if (v.lista.some((y) => y.id !== x.id && y.nombre.toLowerCase() === n.toLowerCase())) { avisar(`Ya hay un usuario que se llama «${n}»`); return; }
+            guardarUsuarios({ activo: v.activo, lista: v.lista.map((y) => (y.id === x.id ? { ...y, nombre: n } : y)) });
+            pintar();
+          } }),
+          x.id !== u.activo && h('button', { class: 'boton discreto', type: 'button', text: '🗑️ Quitar y borrar sus datos de este móvil', onclick: async () => {
+            if (!await preguntar({ texto: `¿Quitar a «${x.nombre}»?`, detalle: `Se borran de ESTE móvil sus recetas, su cuaderno y sus fotos (${resumenDe(x.id)}). Si están en el PC, allí se quedan. Esto no se puede deshacer.`, si: 'Borrar', no: 'Cancelar', peligro: true })) return;
+            localStorage.removeItem(`quimica.u.${x.id}`);
+            try { indexedDB.deleteDatabase(baseDeFotos(x.id)); } catch { /* sin fotos */ }
+            const v = leerUsuarios();
+            guardarUsuarios({ activo: v.activo, lista: v.lista.filter((y) => y.id !== x.id) });
+            pintar();
+          } }))),
+        h('button', { class: 'boton', type: 'button', text: '＋ Nuevo usuario', onclick: async () => {
+          const n = await nombrar('Nombre del usuario nuevo', '');
+          if (!n) return;
+          const v = leerUsuarios();
+          if (v.lista.some((y) => y.nombre.toLowerCase() === n.toLowerCase())) { avisar(`Ya hay un usuario que se llama «${n}»`); return; }
+          let id;
+          do { id = `u${Math.random().toString(36).slice(2, 7)}`; } while (v.lista.some((y) => y.id === id) || id === 'u1');
+          guardarUsuarios({ activo: v.activo, lista: [...v.lista, { id, nombre: n }] });
+          await sincronizar();
+          pasarAUsuario(id);
+        } }));
+    };
+    pintar();
   };
 
   // ─── Usuarios en la app del PC (versión 111) ───
@@ -4595,6 +4714,7 @@
             vibrar(30);
             // En la app de internet: se guarda y se sincroniza al tocar (la ventana puente necesita un toque)
             if (enLaWeb) {
+              if (!await confirmarUnion('')) { estado.textContent = 'No se ha conectado.'; return; }
               guardar('quimica.pc', { direccion: enlace.direccion, codigo: enlace.codigo });
               localStorage.removeItem('quimica.pc-ultima');
               estado.textContent = '✅ Código leído.';
@@ -4754,6 +4874,7 @@
       verPendiente();
       return [
         h('p', {}, '💻 Conectado con ', h('b', { text: pc.direccion })),
+        pc.usuario && h('p', {}, '👤 Usuario del PC: ', h('b', { text: pc.usuario })),
         h('p', { class: 'nota', text: 'Desde esta página los datos se pasan cuando tocas «Sincronizar», con el móvil en la misma wifi que el PC y Química PC abierto: se abre una ventana un momento y se cierra sola. Mientras tanto, la app funciona igual sin el PC.' }),
         estado, pendiente,
         h('button', { class: 'boton', type: 'button', text: '🔄 Sincronizar con el PC', onclick: () => sincronizarPorPuente() }),
@@ -4768,6 +4889,7 @@
     if (pc && pc.direccion) {
       return [
         h('p', {}, '💻 Conectado con ', h('b', { text: pc.direccion === 'localhost:8765' ? 'el PC por cable USB' : pc.direccion })),
+        pc.usuario && h('p', {}, '👤 Usuario del PC: ', h('b', { text: pc.usuario })),
         h('p', { class: 'nota', text: 'Las recetas, el cuaderno y las fotos se pasan solos al PC y del PC (con Química PC abierto). Si cambias lo mismo en los dos sitios, se queda el cambio más nuevo.' }),
         estado, ahora,
         h('button', { class: 'boton discreto', text: 'Desconectar del PC', onclick: async () => {
@@ -4797,6 +4919,9 @@
       if (!direccion.value.trim() || !/^\d{6}$/.test(codigo.value.trim())) { avisar('Escribe la dirección y el código de 6 números que enseña Química PC'); return; }
       if (enLaWeb) {
         // (en la web, conectar ES sincronizar por la ventana puente, ya, con este toque; si no sale, no se guarda)
+        // Ojo: la ventana tiene que abrirse en este toque; la pregunta de «ya tiene datos» la haría esperar
+        // y el navegador la bloquearía. Por eso, en la web, esa pregunta va al escanear el QR (arriba) y aquí
+        // se avisa en el texto de Ajustes
         const d = direccion.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
         guardar('quimica.pc', { direccion: /:\d+$/.test(d) ? d : `${d}:8765`, codigo: codigo.value.trim() });
         localStorage.removeItem('quimica.pc-ultima');
@@ -4827,6 +4952,12 @@
       const campoClave = h('input', { class: 'campo', type: 'password', autocomplete: 'off', placeholder: 'Pega aquí la clave' });
       const copia = h('textarea', { class: 'campo', rows: 4, placeholder: 'Pega aquí una copia hecha con «Copiar todas las recetas»' });
       poner(cuerpo,
+        // El usuario de este móvil (en la pantalla del PC los usuarios son los de Química PC, más abajo)
+        !(enElPC && pcVisto) && [
+          h('h3', { text: '👤 Usuario' }),
+          h('p', {}, 'Usas: ', h('b', { text: usuarioDeAhora().nombre })),
+          h('button', { class: 'boton secundario', type: 'button', text: '🔁 Cambiar de usuario…', onclick: abrirUsuariosMovil }),
+        ],
         h('h3', { text: '✨ Gemini (la IA)' }),
         hayIA()
           ? [h('p', { class: 'nota', text: '✅ Hay una clave puesta. Solo está en este móvil y solo se usa para hablar con Gemini.' }),
