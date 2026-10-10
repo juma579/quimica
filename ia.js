@@ -249,18 +249,16 @@ Cómo montarlo:
   const SEGURIDAD = 'seguridad';
   const FINES_DE_SEGURIDAD = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION'];
 
-  // Pensar menos antes de escribir (versión 88): la primera respuesta real gastó 1.284 «palabras» de
-  // pensar y tardó 49 s; para esta tarea tan mecánica no hacen falta. Si Gemini rechaza el ajuste
-  // (400 que nombra «thinking»), se quita, se repite sin él y se recuerda para las siguientes
-  let limitarPensar = true;
-  const PRESUPUESTO_PENSAR = 512;
+  // OJO: NO limitar el «pensar» (thinkingConfig / thinkingBudget). Se probó en la versión 88 y con el
+  // texto de la receta del usuario Gemini se BLOQUEABA (promptFeedback.blockReason «OTHER», tras
+  // 60-90 s y sin escribir nada); sin el límite, el mismo texto se convierte bien. Con el texto de
+  // un artículo el límite no daba problema: depende del texto, y no se puede fiar
 
   const llamar = async (modelo, texto, clave, pedir) => {
     const cuerpo = {
       systemInstruction: { parts: [{ text: SISTEMA }] },
       contents: [{ role: 'user', parts: [{ text: texto }] }],
-      generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: ESQUEMA,
-        ...(limitarPensar ? { thinkingConfig: { thinkingBudget: PRESUPUESTO_PENSAR } } : {}) },
+      generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: ESQUEMA },
     };
     const control = new AbortController();
     const temporizador = setTimeout(() => control.abort(), TIEMPO_MAXIMO);
@@ -274,12 +272,6 @@ Cómo montarlo:
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         const mensaje = String((j.error && j.error.message) || `HTTP ${r.status}`);
-        // Ese modelo no admite limitar el pensar: se repite sin el ajuste (solo esta vez y las siguientes)
-        if (r.status === 400 && limitarPensar && /think/i.test(mensaje)) {
-          limitarPensar = false;
-          clearTimeout(temporizador);
-          return llamar(modelo, texto, clave, pedir);
-        }
         // Gemini contesta 400 tanto si la clave no vale como si la petición está mal: se distinguen por el texto
         const estado = r.status === 400 && /api.?key/i.test(mensaje) ? 401 : r.status;
         throw new ErrorIA(mensaje.split(clave).join('[clave]').slice(0, 200), estado);
@@ -312,6 +304,8 @@ Cómo montarlo:
   // Lo que se le dice al usuario cuando falla
   const mensajeDe = (err) => {
     if (err.estado === -1) return 'No hay conexión a internet: la IA la necesita';
+    // (el motivo «OTHER» no es de seguridad: Gemini bloquea sin decir por qué; no sirve repetirlo)
+    if (err.estado === SEGURIDAD && /\(OTHER\)/.test(err.message)) return 'Gemini ha rechazado este texto sin decir por qué. Prueba a acortarlo un poco, o escribe la receta a mano con ✍️ (las cuentas las hace la app igual).';
     if (err.estado === SEGURIDAD) return 'Gemini no ha querido convertir este texto por sus normas de seguridad. Puedes escribir la receta a mano con ✍️ (las cuentas las hace la app igual).';
     if (err.estado === 429) return 'Gemini ha llegado a su límite gratuito de hoy (20 peticiones al día, y los intentos con Gemini saturado también cuentan). Se renueva de madrugada';
     if (err.estado === 401 || err.estado === 403) return 'Gemini no acepta la clave: revísala en ⚙️ Ajustes';
