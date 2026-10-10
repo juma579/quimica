@@ -855,7 +855,8 @@
   // Desplaza la caja para que eso quede donde estaba (o, sin desfase, arriba con un margen)
   const irA = (caja, m, desfase) => {
     const el = buscarMarca(caja, m);
-    if (el) caja.scrollTop += el.getBoundingClientRect().top - caja.getBoundingClientRect().top - desfase;
+    // (solo si se ve: una marca de la otra pantalla de la receta no vale)
+    if (el && el.getClientRects().length) caja.scrollTop += el.getBoundingClientRect().top - caja.getBoundingClientRect().top - desfase;
     return el;
   };
   const volverA = (caja, m) => { if (m) irA(caja, m, m.desfase); };
@@ -1066,6 +1067,44 @@
       return pasos.length ? h('small', { class: 'usos', text: `→ sale en el paso ${pasos.slice(0, 3).join(', ')}` }) : null;
     };
 
+    // ── Dos pantallas: «🧮 Datos» a la izquierda y «📋 Pasos» a la derecha (versión 95, lo pidió el
+    // usuario). Se cambia con las pestañas o deslizando el dedo hacia un lado. Cada una recuerda por
+    // dónde iba; la elegida se recuerda por receta (quimica.pagina-receta). Si se prefiere todo
+    // seguido, «quimica.receta-junta» en Ajustes
+    // (con un cronómetro de esta receta en marcha y sin nada recordado, abre en los pasos)
+    const recordada = leer('quimica.pagina-receta', {})[id];
+    let paginaActual = recordada === 'pasos' || recordada === 'datos' ? recordada
+      : cronometros.some((c) => c.recetaId === id) ? 'pasos' : 'datos';
+    const alturas = { datos: 0, pasos: 0 };
+    const irPagina = (nombre) => {
+      if (nombre === paginaActual || !['datos', 'pasos'].includes(nombre)) return;
+      alturas[paginaActual] = cuerpo.scrollTop;
+      paginaActual = nombre;
+      guardar('quimica.pagina-receta', { ...leer('quimica.pagina-receta', {}), [id]: nombre });
+      for (const p of cuerpo.querySelectorAll('.pagina-receta')) p.hidden = p.dataset.pagina !== nombre;
+      for (const b of cuerpo.querySelectorAll('.pestana-receta')) b.setAttribute('aria-pressed', String(b.dataset.pagina === nombre));
+      cuerpo.scrollTop = alturas[nombre] || 0;
+      // (para que «dónde iba» apunte a lo de esta pantalla aunque no se haya movido)
+      cuerpo.dispatchEvent(new Event('scroll'));
+      const nueva = cuerpo.querySelector(`.pagina-receta[data-pagina="${nombre}"]`);
+      if (nueva) { nueva.classList.remove('entra-izq', 'entra-der'); void nueva.offsetWidth; nueva.classList.add(nombre === 'pasos' ? 'entra-der' : 'entra-izq'); }
+    };
+    // Deslizar: un gesto sobre todo horizontal y de más de 70 px (no en una casilla ni en algo que se
+    // desplaza de lado)
+    let dedo0 = null;
+    cuerpo.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      dedo0 = e.touches.length === 1 && !e.target.closest('input, textarea, select, .arbol-caja, .miniaturas') ? { x: t.clientX, y: t.clientY } : null;
+    }, { passive: true });
+    cuerpo.addEventListener('touchend', (e) => {
+      if (!dedo0 || leer('quimica.receta-junta', false) === true) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - dedo0.x;
+      const dy = t.clientY - dedo0.y;
+      dedo0 = null;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > 1.6 * Math.abs(dy)) irPagina(dx < 0 ? 'pasos' : 'datos');
+    }, { passive: true });
+
     const pintar = () => {
       titulo.textContent = receta.nombre;
       filasResultado = new Map();
@@ -1100,7 +1139,9 @@
       };
       const original = h('p', { class: 'original', hidden: true, text: receta.textoOriginal || '' });
 
-      poner(cuerpo,
+      // El detalle en bloques (versión 95): lo de arriba, los datos, los pasos y lo de abajo. En dos
+      // pantallas (datos | pasos, con pestañas y deslizando) o, si se prefiere, todo seguido (Ajustes)
+      const bInfo = [
         receta.resumen && h('p', { class: 'resumen', text: receta.resumen }),
         (receta.avisos || []).length > 0 && h('div', { class: 'avisos' },
           h('p', {}, h('b', { text: '⚠️ Para revisar' })),
@@ -1109,14 +1150,20 @@
         receta.seguridad && h('div', { class: 'seguridad', text: `🥽 ${receta.seguridad}` }),
         // Lo del texto que no es un paso pero puede importar: purezas, grados, marcas (la IA lo separa)
         receta.notas && h('div', { class: 'notas-receta' }, h('b', { text: '📝 Del texto original' }), h('p', { text: receta.notas })),
+      ];
+      const bDatos = [
         (receta.datos.length > 0 || receta.calculos.length > 0) && [
           h('h3', { text: '🧮 Datos y cantidades' }),
           h('p', { class: 'nota', text: 'Cambia un dato y se recalcula todo. Cada cantidad va debajo de los datos que usa; tócala para ver su fórmula.' }),
           resumenSentido,
           hojaDeCalculo(), botonInicio],
+      ];
+      const bPasos = [
         h('h3', { text: '📋 Pasos' }),
         cajaPasos,
         botonEmpezar,
+      ];
+      const bMas = [
         hayIA() && [h('h3', { text: '✨ Pedir un cambio a la IA' }), peticion, botonIA],
         h('h3', { text: 'Más' }),
         receta.textoOriginal && h('button', { class: 'boton secundario', text: '📄 Ver el texto que pegaste', onclick: () => { original.hidden = !original.hidden; } }),
@@ -1139,7 +1186,19 @@
           pintarLista();
           atras();
         } }),
-        receta.modelo && h('p', { class: 'nota', text: `Hecha con Gemini (${receta.modelo}). La IA puede equivocarse: revisa los datos y las fórmulas.` }));
+        receta.modelo && h('p', { class: 'nota', text: `Hecha con Gemini (${receta.modelo}). La IA puede equivocarse: revisa los datos y las fórmulas.` }),
+      ];
+      if (leer('quimica.receta-junta', false) === true) {
+        poner(cuerpo, bInfo, bDatos, bPasos, bMas);
+      } else {
+        const hojaDe = (nombre, ...bloques) => h('div', { class: 'pagina-receta', 'data-pagina': nombre, hidden: paginaActual !== nombre }, ...bloques);
+        const pestana = (nombre, texto) => h('button', { class: 'pestana-receta', type: 'button', 'data-pagina': nombre, 'aria-pressed': String(paginaActual === nombre),
+          text: texto, onclick: () => irPagina(nombre) });
+        poner(cuerpo,
+          h('div', { class: 'pestanas-receta' }, pestana('datos', '🧮 Datos'), pestana('pasos', `📋 Pasos (${receta.pasos.length})`)),
+          hojaDe('datos', bInfo, bDatos, bMas),
+          hojaDe('pasos', bPasos));
+      }
       botonInicio.hidden = true;
       pintarCalculado();
     };
@@ -3732,6 +3791,55 @@
   // Los tipos de apunte con fotos, para filtrar (K.tipoFoto)
   const TIPOS_FOTO = [['analisis', '🔬 Análisis'], ['fases', '🧫 Fases'], ['disoluciones', '🧪 Disoluciones'], ['notas', '✍️ Notas']];
 
+  // Las fotos en una tabla (versión 95, de las ideas pendientes de las fotos): los grupos en columnas y
+  // los aumentos en filas, para ver de un vistazo cómo se ve cada grupo a cada aumento. Usa el mismo
+  // filtro de tipo que Fotos (de entrada, solo los análisis); tocar una foto la abre en grande
+  const abrirTablaFotos = (receta, alVolver, amb = ambitoActual(receta)) => {
+    const { cuerpo } = abrirPanel('▦ Fotos en tabla', null, alVolver);
+    const numeroDe = (a) => { const n = Number(String(a).replace(/[^\d.,]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : Infinity; };
+    const pintar = () => {
+      const c = leerCuaderno();
+      const colores = coloresDe(c, receta, amb);
+      const tipos = new Set(leer('quimica.fotos-tipos', ['analisis']));
+      const todas = K.fotosDe(c, amb);
+      const fotos = todas.filter((f) => tipos.has(K.tipoFoto(f.entrada)));
+      const claveG = (e) => e.grupoId || (e.disolucionId ? `d:${e.disolucionId}` : '');
+      const nombreG = (e) => e.grupo || (e.disolucion && `🧪 ${e.disolucion}`) || 'Sin grupo';
+      const columnas = [];
+      for (const f of fotos) {
+        const k = claveG(f.entrada);
+        if (!columnas.some((x) => x.k === k)) columnas.push({ k, nombre: nombreG(f.entrada) });
+      }
+      // En el orden de los grupos del cuaderno (los demás, al final)
+      const orden = K.gruposDe(c, amb).map((g) => g.id);
+      const sitio = (k) => (orden.includes(k) ? orden.indexOf(k) : orden.length);
+      columnas.sort((a, b) => sitio(a.k) - sitio(b.k));
+      const filas = [...new Set(fotos.map((f) => K.infoFoto(f.entrada, f.id).aumento || ''))]
+        .sort((a, b) => (a === '' ? 1 : b === '' ? -1 : numeroDe(a) - numeroDe(b)));
+      const celda = (aumento, k) => {
+        const lista = fotos.filter((f) => (K.infoFoto(f.entrada, f.id).aumento || '') === aumento && claveG(f.entrada) === k);
+        return h('td', { class: 'celda-foto' }, lista.map((f) => h('button', { class: 'foto-mini', 'aria-label': `Ver ${K.tituloFoto(c, f.id, f.entrada)} en grande`,
+          title: `${fechaCorta(f.entrada.fecha)} · ${K.momentoDe(c, f.entrada.grupoId, f.entrada.fecha)}`, onclick: () => verFoto(f.id, pintar) }, fotoImg(f.id))));
+      };
+      poner(cuerpo,
+        h('div', { class: 'chips' }, h('span', { class: 'chips-rotulo', text: 'Ver:' }),
+          TIPOS_FOTO.map(([t, texto]) => {
+            const n = todas.filter((f) => K.tipoFoto(f.entrada) === t).length;
+            return n > 0 && h('button', { class: 'chip', 'aria-pressed': String(tipos.has(t)), text: `${texto} (${n})`,
+              onclick: () => { if (tipos.has(t)) tipos.delete(t); else tipos.add(t); guardar('quimica.fotos-tipos', [...tipos]); pintar(); } });
+          })),
+        fotos.length
+          ? h('div', { class: 'tabla-fotos' }, h('table', {},
+            h('thead', {}, h('tr', {}, h('th', { text: '🔍' }),
+              columnas.map((col) => h('th', {}, colores.get(col.k) && h('span', { class: 'punto-grupo', style: `background: ${colores.get(col.k)}` }), col.nombre)))),
+            h('tbody', {}, filas.map((a) => h('tr', {}, h('th', { text: a || 'Sin aumento' }), columnas.map((col) => celda(a, col.k)))))))
+          : h('p', { class: 'nota', text: todas.length ? 'Ninguna foto de ese tipo: elige qué ver arriba.' : 'Aún no hay fotos.' }),
+        h('p', { class: 'nota', text: 'Cada columna es un grupo y cada fila un aumento. Toca una foto para verla en grande. El aumento se pone en la foto en grande.' }));
+    };
+    alLlegarCambios(cuerpo, () => pintar());
+    pintar();
+  };
+
   // Todas las fotos de la receta, por sesiones (un bloque por apunte, con sus apartados). Lo pidió el
   // usuario: álbumes hechos a mano (grupos de fotos), varios grupos de muestras a la vez en el filtro,
   // y filtrar por tipo (de entrada solo los análisis: «yo solo quiero analizar muestras»). Las fotos
@@ -3898,6 +4006,7 @@
           h('div', { class: 'filtros-fotos' },
             elegir('📂 Apartado', 'apartado', apartados),
             elegir('🔍 Aumento', 'aumento', aumentos)),
+          !elAlbum && todas.length > 0 && h('button', { class: 'boton secundario', text: '▦ Ver en tabla: grupos × aumentos', onclick: () => abrirTablaFotos(receta, pintar, amb) }),
           fotos.length > 1 && h('div', { class: 'sesion-acciones' }, botonMarcar(fotos.map((f) => f.id), `todas las que se ven (${fotos.length})`)),
           fotos.length
             ? sesiones.map(sesion)
@@ -4268,8 +4377,51 @@
         enLaWeb
           ? h('p', { class: 'nota', text: 'En la versión web (la del iPhone) no se puede conectar con Química PC. Todo se guarda solo en este aparato: haz copias de vez en cuando (abajo), y los cuadernos se pueden guardar en PDF con «📄 Hacer un informe».' })
           : seccionPC(pintar),
-        h('h3', { text: '💾 Copia de las recetas' }),
-        h('p', { class: 'nota', text: `Las recetas (${recetas.length}) solo están en este móvil: si desinstalas la app, se pierden. Puedes copiarlas y pegarlas en un sitio seguro (un correo para ti, una nota…).` }),
+        h('h3', { text: '📱 Pantalla de la receta' }),
+        h('label', { class: 'parte-opcion' },
+          h('input', { type: 'checkbox', checked: leer('quimica.receta-junta', false) === true, onchange: (e) => guardar('quimica.receta-junta', e.target.checked) }),
+          ' Todo en una sola pantalla (sin pestañas)'),
+        h('p', { class: 'nota', text: 'Por defecto, la receta tiene dos pantallas: «🧮 Datos» a la izquierda y «📋 Pasos» a la derecha. Se cambia con las pestañas de arriba o deslizando el dedo hacia un lado. Si lo prefieres, marca esto y vuelve todo seguido.' }),
+        h('h3', { text: '💾 Copia de seguridad de todo' }),
+        h('p', { class: 'nota', text: 'Guarda en un archivo las recetas, el cuaderno entero (grupos, apuntes, disoluciones) y, si quieres, las fotos. Sirve para no perder nada si se borran los datos del navegador, se desinstala la app o cambias de móvil. No lleva la clave de Gemini.' }),
+        (() => {
+          const conFotos = h('input', { type: 'checkbox', checked: true });
+          const estado = h('p', { class: 'nota' });
+          const guardarBoton = h('button', { class: 'boton secundario', text: '💾 Guardar la copia en un archivo', onclick: async () => {
+            guardarBoton.disabled = true;
+            estado.textContent = 'Preparando la copia…';
+            try {
+              const r = await guardarCopiaCompleta(conFotos.checked, (n, total) => { estado.textContent = `Preparando la copia… foto ${n} de ${total}`; });
+              estado.textContent = `✅ Guardada: «${r.nombre}» en ${r.donde}.`;
+            } catch (e) {
+              estado.textContent = e && e.name === 'AbortError' ? '' : `No se ha podido guardar la copia: ${e && e.message ? e.message : 'error'}`;
+            }
+            guardarBoton.disabled = false;
+          } });
+          const archivo = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: async () => {
+            const f = archivo.files && archivo.files[0];
+            archivo.value = '';
+            if (!f) return;
+            if (!await preguntar({ texto: '¿Recuperar esta copia?', detalle: `«${f.name}» sustituirá las recetas y el cuaderno que hay ahora en este aparato (se guarda antes una copia de lo de ahora, sin fotos, por si acaso). Las fotos de la copia se añaden.`, si: 'Recuperar', no: 'Cancelar', peligro: true })) return;
+            try {
+              estado.textContent = 'Recuperando…';
+              const r = await recuperarCopiaCompleta(f);
+              pintarLista();
+              pintarCuadernos();
+              estado.textContent = `✅ Recuperadas ${r.recetas} recetas, ${r.apuntes} apuntes del cuaderno y ${r.fotos} fotos.`;
+            } catch (e) {
+              estado.textContent = `No se ha podido recuperar: ${e && e.message ? e.message : 'error'}`;
+            }
+          } });
+          return [
+            h('label', { class: 'parte-opcion' }, conFotos, ' Con las fotos (el archivo pesa más)'),
+            guardarBoton,
+            h('button', { class: 'boton secundario', text: '📥 Recuperar desde un archivo', onclick: () => archivo.click() }),
+            archivo,
+            estado];
+        })(),
+        h('h3', { text: 'Solo las recetas, como texto' }),
+        h('p', { class: 'nota', text: `Las recetas (${recetas.length}) también se pueden copiar y pegar en un sitio seguro (un correo para ti, una nota…).` }),
         h('button', { class: 'boton secundario', text: '📋 Copiar todas las recetas', onclick: async () => {
           try { await navigator.clipboard.writeText(JSON.stringify(recetas)); avisar('Copiadas: pégalas donde quieras guardarlas'); } catch { avisar('No se ha podido copiar'); }
         } }),
@@ -4286,6 +4438,96 @@
         h('p', { class: 'nota', text: `Versión de la app: ${typeof VERSION_WEB === 'string' ? VERSION_WEB : '?'}` }));
     };
     pintar();
+  };
+
+  // ─── Copia de seguridad de todo (versión 95, lo pidió el usuario) ───
+  // Un archivo con las recetas, el cuaderno entero (grupos, apuntes, disoluciones, carpetas…), los
+  // pasos marcados, los ciclos y, si se quiere, las fotos (en base64). NO lleva la clave de Gemini ni
+  // lo de la conexión con el PC. Recuperar SUSTITUYE lo que hay (con una copia de lo de antes en
+  // localStorage «quimica.antes-de-recuperar»)
+  const aBase64 = (blob) => new Promise((ok, mal) => {
+    const lector = new FileReader();
+    lector.onload = () => ok(String(lector.result).split(',')[1] || '');
+    lector.onerror = () => mal(lector.error);
+    lector.readAsDataURL(blob);
+  });
+  const deBase64 = (base64, tipo) => {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: tipo || 'image/jpeg' });
+  };
+  // Las partes del archivo, una a una (así no hay un texto de decenas de MB de golpe)
+  const partesDeLaCopia = async (conFotos, alAvanzar) => {
+    const partes = [];
+    const cabecera = JSON.stringify({ tipo: 'quimica-copia', version: typeof VERSION_WEB === 'string' ? VERSION_WEB : '?', fecha: Date.now(),
+      recetas, cuaderno: leerCuaderno(), hechos: leer('quimica.hechos', {}), ciclos: leer('quimica.ciclos', {}) });
+    partes.push(`${cabecera.slice(0, -1)},"fotos":[`);
+    if (conFotos) {
+      // (todas las fotos guardadas en este aparato)
+      const ids = await window.Fotos.ids();
+      let primera = true;
+      let n = 0;
+      for (const id of ids) {
+        const f = await window.Fotos.leer(id);
+        if (!f || !f.blob) continue;
+        partes.push(`${primera ? '' : ','}${JSON.stringify({ id: f.id, nombre: f.nombre, ancho: f.ancho, alto: f.alto, fecha: f.fecha, tipo: f.blob.type, datos: await aBase64(f.blob) })}`);
+        primera = false;
+        if (alAvanzar) alAvanzar(++n, ids.length);
+      }
+    }
+    partes.push(']}');
+    return partes;
+  };
+  const guardarCopiaCompleta = async (conFotos, alAvanzar) => {
+    const partes = await partesDeLaCopia(conFotos, alAvanzar);
+    const d = new Date();
+    const nombre = `Quimica-copia-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
+    const plugin = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.GuardarArchivo;
+    if (plugin) {
+      // En Android, a la carpeta Descargas, en trozos de 1 MB
+      let texto = '';
+      let primera = true;
+      const mandar = async (t, ultima) => { await plugin.escribir({ nombre, texto: t, primera, ultima }); primera = false; };
+      for (const p of partes) {
+        texto += p;
+        while (texto.length > 1000000) { await mandar(texto.slice(0, 1000000), false); texto = texto.slice(1000000); }
+      }
+      await mandar(texto, true);
+      return { nombre, donde: 'la carpeta Descargas del móvil' };
+    }
+    const archivo = new File(partes, nombre, { type: 'application/json' });
+    // En el iPhone (y donde se pueda), la hoja de compartir: «Guardar en Archivos»
+    if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
+      try { await navigator.share({ files: [archivo], title: nombre }); return { nombre, donde: 'donde hayas elegido' }; } catch (e) { if (e && e.name === 'AbortError') throw e; }
+    }
+    const enlace = h('a', { href: URL.createObjectURL(archivo), download: nombre });
+    document.body.append(enlace);
+    enlace.click();
+    enlace.remove();
+    return { nombre, donde: 'tus descargas' };
+  };
+  // Lee un archivo de copia y lo deja en el aparato. Devuelve cuántas recetas, apuntes y fotos entraron
+  const recuperarCopiaCompleta = async (archivo) => {
+    let c;
+    try { c = JSON.parse(await archivo.text()); } catch { c = null; }
+    if (!c || c.tipo !== 'quimica-copia' || !Array.isArray(c.recetas)) throw new Error('Ese archivo no es una copia de Química');
+    const buenas = c.recetas.map((x) => Q.validar(x).receta).filter(Boolean);
+    const cuaderno = K.limpiar(c.cuaderno || {});
+    // Lo de antes, por si acaso (sin fotos: no caben en localStorage)
+    guardar('quimica.antes-de-recuperar', { fecha: Date.now(), recetas, cuaderno: leerCuaderno() });
+    let fotos = 0;
+    for (const f of Array.isArray(c.fotos) ? c.fotos : []) {
+      if (!f || !f.id || !f.datos) continue;
+      await window.Fotos.guardar({ id: f.id, blob: deBase64(f.datos, f.tipo), nombre: f.nombre || 'foto', ancho: f.ancho, alto: f.alto, fecha: f.fecha || Date.now() });
+      fotos++;
+    }
+    recetas = buenas;
+    guardarRecetas();
+    guardarCuaderno(cuaderno);
+    guardar('quimica.hechos', c.hechos && typeof c.hechos === 'object' ? c.hechos : {});
+    guardar('quimica.ciclos', c.ciclos && typeof c.ciclos === 'object' ? c.ciclos : {});
+    return { recetas: buenas.length, apuntes: cuaderno.entradas.length, fotos };
   };
 
   // ─── Arranque ───

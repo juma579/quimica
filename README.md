@@ -21,7 +21,16 @@ Te sale un icono de un matraz azul. Ábrela desde ahí, como cualquier otra app.
 
 ## 🤖 Instalarla en Android
 
-1. Abre la dirección con **Chrome**.
+**Lo mejor: la app de verdad (APK).** Con ella **los cronómetros suenan aunque tengas la app cerrada**, incluso con «No molestar».
+
+1. Abre **https://github.com/juma579/quimica/releases/latest** en el móvil.
+2. Baja el archivo **`Quimica-….apk`** (en «Assets»).
+3. Ábrelo. Si Android lo pide, permite **«instalar apps de esta fuente»** para tu navegador.
+4. Pulsa **Instalar**. Si ya la tenías instalada, se actualiza sin perder tus datos.
+
+**Más sencillo, sin APK** (los cronómetros solo avisan con la app abierta):
+
+1. Abre la dirección de arriba con **Chrome**.
 2. Pulsa los tres puntos **⋮** (arriba a la derecha).
 3. Elige **«Instalar app»** (o «Añadir a pantalla de inicio»).
 
