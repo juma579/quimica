@@ -4790,6 +4790,11 @@
   // pide que el navegador no borre lo guardado aunque falte sitio
   if (enLaWeb && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+    // Si ya había una versión y se ha guardado otra nueva, decirlo (si no, se seguiría viendo la de antes)
+    const habia = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (habia) avisar('Hay una versión nueva de la app', { texto: 'Abrirla', hacer: () => location.reload() });
+    });
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   }
   // Un borrador de una receta que se estaba editando cuando se cerró la app

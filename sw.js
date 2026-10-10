@@ -10,8 +10,11 @@ const ARCHIVOS = ['./', 'index.html', 'estilos.css', 'version.js', 'quimica.js',
   'manifest.webmanifest', 'icono.svg', 'iconos/icono-180.png', 'iconos/icono-192.png', 'iconos/icono-512.png',
   'vendor/UTIF.js', 'vendor/pako_inflate.min.js'];
 
+// Pedidos a internet de verdad (`cache: 'reload'`): si no, el navegador puede dar lo que tenía guardado
+// de hace unos minutos (GitHub Pages deja guardarlo 10 min) y la copia nueva quedaría con archivos viejos
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(COPIA).then((c) => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(COPIA).then((c) => c.addAll(ARCHIVOS.map((a) => new Request(a, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k.startsWith('quimica-') && k !== COPIA).map((k) => caches.delete(k))))
