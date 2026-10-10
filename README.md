@@ -53,7 +53,7 @@ Tus recetas, cuaderno y fotos se guardan en `Documentos\Quimica PC` (también un
 
 Con «Química PC» abierto, en su ventana salen una **dirección** y un **código**.
 
-- **Android** (la APK): en la app, ⚙️ **Ajustes → Conectar con el PC**, escribe la dirección y el código y pulsa **«Conectar por la wifi»**. También se puede por **cable USB** (con las herramientas de Android).
+- **Android** (la APK): en la app, ⚙️ **Ajustes → Conectar con el PC → «📷 Escanear el QR del PC»**, y apunta al código QR que sale en la app del PC. Se conecta solo. (Si prefieres, escribe la dirección y el código y pulsa **«Conectar por la wifi»**, o usa el **cable USB**.)
 - **iPhone** (y cualquier móvil, también Android sin la APK): el programa del PC **sirve la app por la wifi**, así que no hay nada que instalar en el móvil.
   1. En la app del PC (en el navegador, ⚙️ **Ajustes**) sale un **código QR**.
   2. En el móvil, con la misma wifi, **abre la cámara y apunta al código**. Toca el aviso que sale.

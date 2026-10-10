@@ -151,7 +151,15 @@
     return n;
   };
 
-  const Sincro = { COLECCIONES, huella, sellar, estadoDe, fusionar, aplicar, diferencias, limpiarEstado, limpiarMeta };
+  // Lo que lleva el QR de Química PC: «http://192.168.1.15:8765/#c=123456» → { direccion, codigo }.
+  // Solo vale una dirección de la red de casa (IP privada con puerto, o localhost) y 6 cifras de
+  // código: cualquier otro texto de cualquier otro QR se rechaza (no se conecta a donde sea)
+  const enlaceDePC = (texto) => {
+    const m = /^http:\/\/((?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|localhost|127\.0\.0\.1):\d{2,5})\/?#c=(\d{6})$/.exec(String(texto || '').trim());
+    return m ? { direccion: m[1], codigo: m[2] } : null;
+  };
+
+  const Sincro = { COLECCIONES, huella, sellar, estadoDe, fusionar, aplicar, diferencias, limpiarEstado, limpiarMeta, enlaceDePC };
   if (typeof module !== 'undefined' && module.exports) module.exports = Sincro;
   else raiz.Sincro = Sincro;
 })(typeof window !== 'undefined' ? window : globalThis);

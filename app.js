@@ -4296,6 +4296,63 @@
     return true;
   };
 
+  // ─── Escanear el QR de Química PC con la cámara de la app (versión 98, lo pidió el usuario) ───
+  // Pide la cámara (el permiso lo pide Capacitor la primera vez), lee cada fotograma con jsQR
+  // (www/vendor/jsQR.js, se carga solo aquí) y, si el QR es el enlace de Química PC de la red de casa
+  // (Sincro.enlaceDePC), se conecta. No se guarda ninguna imagen. alConectar: para repintar Ajustes
+  const escanearQR = async (alConectar) => {
+    const video = h('video', { class: 'escaner-video', playsinline: true, muted: true, autoplay: true });
+    const estado = h('p', { class: 'escaner-estado', text: 'Apunta la cámara al código QR de la pantalla del PC' });
+    const lienzo = document.createElement('canvas');
+    let flujo = null;
+    let vivo = true;
+    const parar = () => { vivo = false; if (flujo) flujo.getTracks().forEach((t) => t.stop()); };
+    const { cuerpo } = abrirPanel('📷 Escanear el QR', null, parar);
+    poner(cuerpo, h('div', { class: 'escaner' }, video, estado),
+      h('p', { class: 'nota', text: 'En el PC: Química PC abierto → en el navegador, ⚙️ Ajustes → sale el código QR. Los dos, en la misma wifi. La cámara solo se usa para leer el código: no se guarda nada.' }));
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('sin cámara');
+      flujo = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      video.srcObject = flujo;
+      await video.play().catch(() => {});
+      if (!window.jsQR) {
+        await new Promise((ok, mal) => { const s = h('script', { src: 'vendor/jsQR.js' }); s.onload = ok; s.onerror = mal; document.head.append(s); });
+      }
+    } catch (e) {
+      parar();
+      estado.textContent = e && /denied|NotAllowed|Permission/i.test(`${e.name} ${e.message}`)
+        ? 'No hay permiso para usar la cámara. Actívalo en los ajustes del móvil (Apps → Química → Permisos) o escribe la dirección y el código a mano.'
+        : 'No se puede usar la cámara en este móvil. Escribe la dirección y el código a mano.';
+      return;
+    }
+    const mirar = async () => {
+      if (!vivo || !cuerpo.isConnected) { parar(); return; }
+      if (video.videoWidth) {
+        // (a un tamaño razonable: más pequeño es más rápido y se lee igual)
+        const k = Math.min(1, 640 / video.videoWidth);
+        lienzo.width = Math.round(video.videoWidth * k);
+        lienzo.height = Math.round(video.videoHeight * k);
+        const ctx = lienzo.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, 0, 0, lienzo.width, lienzo.height);
+        const img = ctx.getImageData(0, 0, lienzo.width, lienzo.height);
+        const q = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+        if (q && q.data) {
+          const enlace = S.enlaceDePC(q.data);
+          if (enlace) {
+            parar();
+            estado.textContent = 'Código leído. Conectando…';
+            vibrar(30);
+            if (await conectarPC(enlace.direccion, enlace.codigo)) { atras(); if (alConectar) alConectar(); } else estado.textContent = 'Se leyó el código pero no se pudo conectar. Mira que Química PC esté abierto y la wifi.';
+            return;
+          }
+          estado.textContent = 'Ese código QR no es el de Química PC. Apunta al que sale en la pantalla del PC (Ajustes).';
+        }
+      }
+      setTimeout(mirar, 150);
+    };
+    mirar();
+  };
+
   // "hace 2 min"
   const haceCuanto = (ms) => {
     const s = Math.round((Date.now() - ms) / 1000);
@@ -4389,7 +4446,10 @@
       conectar(porWifi, direccion.value, codigo.value);
     } });
     const porCable = h('button', { class: 'boton secundario', text: '🔌 Por cable USB', onclick: () => conectar(porCable, 'localhost:8765', '') });
+    // En la app de Android (y donde pueda hablar con el PC): escanear el QR con la cámara
+    const escanear = !desdeElPC && !enLaWeb && h('button', { class: 'boton', text: '📷 Escanear el QR del PC', onclick: () => escanearQR(() => pintar()) });
     return [
+      escanear,
       h('p', { class: 'nota', text: 'Con el programa Química PC abierto en tu ordenador, tendrás aquí y allí las mismas recetas, el cuaderno y las fotos, y podrás escribir en cualquiera de los dos. La dirección y el código salen en la ventana de Química PC.' }),
       desdeElPC && h('p', { class: 'nota', text: '📷 Más fácil: en la app del PC (Ajustes) hay un código QR. Escanéalo con la cámara de este móvil y se conecta solo. Si no, escribe el código que sale en el PC:' }),
       direccion, codigo, porWifi, !desdeElPC && porCable,
