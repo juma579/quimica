@@ -683,3 +683,5 @@ small.aviso-sentido[hidden] { display: none; }
 .chip-movil.sin-movil { background: #ffe9b0; color: #5a3d00; }
 .chip-movil + .icono { margin-left: 4px; }
 @media (prefers-color-scheme: dark) { .chip-movil.con-movil { background: #1d3a24; color: #b7e4bf; } .chip-movil.sin-movil { background: #4a3a10; color: #ffe39a; } }
+.panel-cabecera .chip-movil { margin-left: auto; margin-right: 6px; }
+.ruta-datos { margin: 4px 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--color-suave); font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-all; user-select: all; }

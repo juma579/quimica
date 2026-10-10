@@ -138,6 +138,9 @@
       h('header', { class: 'panel-cabecera' },
         h('button', { class: 'icono', 'aria-label': 'Atrás', text: '‹', onclick: atras }), tit, acciones || []),
       cuerpo);
+    // En la app del PC, el estado del móvil también dentro de cada pantalla (la barra de arriba queda
+    // tapada): el mismo indicador, que se actualiza con el de arriba
+    if (document.body.classList.contains('en-pc') && window.chipMovilNuevo) tit.after(window.chipMovilNuevo());
     document.body.append(panel);
     const capa = abrirCapa(panel, alCerrar);
     return { panel, cuerpo, titulo: tit, capa };
@@ -4399,13 +4402,35 @@
         setTimeout(mirarMoviles, 4000);
       };
       setTimeout(mirarMoviles, 4000);
-      pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
+      const cargarInfo = () => pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
         h('p', { class: 'nota', text: 'A mano, sin QR (en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC):' }),
         h('p', {}, 'Dirección: ', h('b', { text: (r.direcciones || []).join('  o  ') || '(este PC no está en ninguna red)' })),
         h('p', {}, 'Código: ', h('b', { class: 'codigo-pc', text: r.codigo })),
         // (lo del cable solo si este PC tiene las herramientas de Android; la carpeta es la de quien lo abre)
-        h('p', { class: 'nota', text: `${r.cable ? 'O por cable USB (Android): conecta el cable y, en el móvil, «🔌 Por cable USB». ' : ''}Tus datos y fotos se guardan en ${r.carpeta}.` }),
+        h('p', { class: 'nota', text: `${r.cable ? 'O por cable USB (Android): conecta el cable y, en el móvil, «🔌 Por cable USB». ' : ''}Tus datos y fotos se guardan en la carpeta:` }),
+        h('p', { class: 'ruta-datos', text: r.carpeta }),
+        // Cambiar la carpeta de datos (versión 103): se copia lo que haya y se sigue ahí
+        h('button', { class: 'boton secundario', type: 'button', text: '📁 Cambiar la carpeta de datos…', onclick: async () => {
+          let cuerpo = { elegir: true };
+          if (!r.dialogoCarpeta) {
+            const ruta = await preguntar({ texto: '📁 Carpeta de datos', detalle: 'Escribe la ruta completa de una carpeta vacía. Se copia ahí todo lo que tienes y se sigue guardando allí; la de antes no se borra.',
+              campo: { placeholder: '/ruta/completa/de/la/carpeta', 'aria-label': 'Carpeta de datos', autocapitalize: 'off' }, si: 'Cambiar', no: 'Cancelar' });
+            if (!ruta || !ruta.trim()) return;
+            cuerpo = { carpeta: ruta.trim() };
+          } else {
+            avisar('Se ha abierto el cuadro de carpetas en este PC (si no lo ves, puede estar detrás del navegador)');
+          }
+          try {
+            const resp = await fetch('/api/carpeta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+            const j = await resp.json();
+            if (!resp.ok) { avisar(j.error || 'No se ha podido cambiar la carpeta'); return; }
+            if (j.cancelado) { avisar('No se ha cambiado nada'); return; }
+            avisar(`Hecho: los datos se guardan ahora en ${j.carpeta}. La carpeta de antes no se ha borrado.`);
+            cargarInfo();
+          } catch { avisar('No se ha podido cambiar la carpeta'); }
+        } }),
         h('p', { class: 'nota', text: '🔒 Por la wifi, conéctalo solo en una red de confianza (la de casa): lo que se pasa no va cifrado. En una wifi pública o de la universidad, mejor el cable.' }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
+      cargarInfo();
       // El QR para el iPhone (y cualquier móvil): abre la app desde el PC y se conecta con el código.
       // Se dibuja en el momento (la librería se carga la primera vez); si no hay red, no sale
       const caja = h('div', { class: 'qr-pc' });
@@ -4693,16 +4718,30 @@
   // sincronizando (verde) o no (amarillo), y un aviso cuando uno se conecta o se desconecta.
   // Conectado = sincronizó hace menos de 45 s (el móvil sincroniza cada 15 s con la app a la vista)
   const vigilarMoviles = () => {
-    const chip = h('button', { id: 'b-movil', class: 'chip-movil sin-movil', type: 'button', 'aria-label': 'Estado del móvil: ver en Ajustes',
-      onclick: () => $('b-ajustes').click() });
-    $('b-ajustes').before(chip);
-    let habia = null; // si había un móvil conectado en la última mirada (null: aún no se ha mirado)
-    const pintarChip = (activos, lista) => {
+    const chips = new Set(); // el de arriba y los de dentro de cada pantalla abierta
+    let ultimo = { activos: 0, lista: 0 };
+    const pintarUno = (chip) => {
+      const { activos, lista } = ultimo;
       chip.classList.toggle('con-movil', activos > 0);
       chip.classList.toggle('sin-movil', activos === 0);
       chip.textContent = activos > 0 ? '📱 conectado' : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
       chip.title = activos > 0 ? 'Hay un móvil sincronizando con este PC' : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
     };
+    const nuevo = (id) => {
+      const c = h('button', { ...(id ? { id } : {}), class: 'chip-movil sin-movil', type: 'button', 'aria-label': 'Estado del móvil: ver en Ajustes',
+        onclick: () => $('b-ajustes').click() });
+      chips.add(c);
+      pintarUno(c);
+      return c;
+    };
+    // (los de pantallas ya cerradas se van quitando)
+    const pintarChip = (activos, lista) => {
+      ultimo = { activos, lista };
+      for (const c of chips) { if (!c.isConnected && c.id !== 'b-movil') chips.delete(c); else pintarUno(c); }
+    };
+    window.chipMovilNuevo = () => nuevo();
+    $('b-ajustes').before(nuevo('b-movil'));
+    let habia = null; // si había un móvil conectado en la última mirada (null: aún no se ha mirado)
     const mirar = async () => {
       try {
         const r = await (await pedirPC('', '', '/api/hola', { espera: 4000 })).json();

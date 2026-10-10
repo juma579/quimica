@@ -47,7 +47,7 @@ Hay dos maneras:
 3. Descomprímelo donde quieras y haz doble clic en **`Quimica PC.bat`**.
 4. Se abre el navegador con la app. Deja abierta la ventana negra mientras la uses.
 
-Tus recetas, cuaderno y fotos se guardan en `Documentos\Quimica PC` (también una copia diaria). Funciona en **Windows**; en Mac o Linux, con `node pc/servidor.js`.
+Tus recetas, cuaderno y fotos se guardan en la carpeta `datos`, junto al programa (también una copia diaria); en la app del PC, **Ajustes → «Cambiar la carpeta de datos…»** para guardarlos en otro sitio. Para actualizar, descomprime el .zip nuevo **encima** (no borres la carpeta: tus datos están dentro). Funciona en **Windows**; en Mac o Linux, con `node pc/servidor.js`.
 
 ### 🔗 Conectar el móvil con el ordenador
 
