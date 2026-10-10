@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Química · sincronizando con el PC</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
+    font: 17px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f4f5fb; color: #1b1d29; text-align: center; }
+  @media (prefers-color-scheme: dark) { body { background: #15161d; color: #e8e9f1; } }
+  .caja { max-width: 380px; }
+  .icono { font-size: 48px; margin: 0 0 8px; }
+  .nota { font-size: 14px; opacity: .75; }
+</style>
+</head>
+<body>
+<div class="caja">
+  <p class="icono" id="icono">🔄</p>
+  <p id="texto"><b>Sincronizando con Química PC…</b></p>
+  <p class="nota" id="nota">No cierres esta ventana: se cierra sola al acabar.</p>
+</div>
+<script>
+// La ventana puente (versión 106). La sirve Química PC y la abre la app de INTERNET (la de github.io,
+// https) al tocar «Sincronizar con el PC»: esa página no puede pedirle nada al PC (http: el navegador
+// lo bloquea), pero sí abrir esta ventana y pasarle mensajes. Esta ventana es del PC, así que habla con
+// él: recibe lo de la app, sincroniza (lo mismo que hace la APK), y le devuelve lo juntado.
+// Seguridad: todo lo que pide lleva el código (y «x-puente», para que el PC no lo deje pasar sin él
+// aunque se abra desde el propio PC). Solo atiende a páginas https.
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const decir = (icono, texto, nota) => { $('icono').textContent = icono; $('texto').textContent = texto; $('nota').textContent = nota || ''; };
+  // Desde el propio PC no hace falta (ahí la app ya habla con el programa): no se usa
+  if (location.protocol !== 'http:' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    decir('ℹ️', 'Esta página solo sirve para sincronizar la app de internet con Química PC.', '');
+    return;
+  }
+  let hecho = false;
+  addEventListener('message', async (e) => {
+    const d = e.data;
+    if (hecho || !d || d.tipo !== 'quimica-sincronizar' || !/^https:\/\//.test(e.origin) || !e.source) return;
+    hecho = true;
+    const contestar = (m) => { try { e.source.postMessage(m, e.origin); } catch { /* la app ya no está */ } };
+    contestar({ tipo: 'quimica-recibido' });
+    const pedir = async (ruta, opciones = {}) => {
+      const r = await fetch(ruta, { ...opciones, headers: { 'x-codigo': d.codigo || '', 'x-puente': '1', ...(opciones.headers || {}) }, signal: AbortSignal.timeout(opciones.espera || 30000) });
+      if (r.status === 403) throw new Error('El código no es el del PC. Vuelve a escanear el QR de Química PC (Ajustes)');
+      if (r.status === 429) throw new Error(`Demasiados intentos con un código equivocado: el PC no contesta durante ${r.headers.get('Retry-After') || 60} s`);
+      if (!r.ok) throw new Error(`El PC ha contestado ${r.status}`);
+      return r;
+    };
+    try {
+      // Que el programa sepa guardar todo lo de la app (uno viejo perdería lo nuevo)
+      const hola = await (await pedir('/api/hola', { espera: 8000 })).json();
+      const sabe = Array.isArray(hola.colecciones) ? hola.colecciones : [];
+      if ((d.colecciones || []).some((c) => !sabe.includes(c))) throw new Error('Química PC está desactualizado: en el PC, cierra su ventana y vuelve a abrirlo. Hasta entonces no se sincroniza, para no perder nada');
+      const fotosApp = Array.isArray(d.fotos) ? d.fotos : [];
+      const r = await (await pedir('/api/sincronizar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: d.estado, fotos: fotosApp.map((f) => f.id) }), espera: 120000 })).json();
+      // Las fotos que el PC no tiene, se le mandan; las que tiene y la app no, se traen
+      const mandar = fotosApp.filter((f) => (r.pedir || []).includes(f.id));
+      const traer = (r.tiene || []).filter((id) => !fotosApp.some((f) => f.id === id));
+      let n = 0;
+      const total = mandar.length + traer.length;
+      for (const f of mandar) {
+        decir('🔄', 'Sincronizando con Química PC…', `Pasando fotos: ${++n} de ${total}`);
+        const info = encodeURIComponent(JSON.stringify({ nombre: f.nombre, ancho: f.ancho, alto: f.alto, fecha: f.fecha }));
+        await pedir(`/api/fotos/${encodeURIComponent(f.id)}`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', 'x-foto': info }, body: f.blob, espera: 60000 });
+      }
+      const traidas = [];
+      for (const id of traer) {
+        decir('🔄', 'Sincronizando con Química PC…', `Pasando fotos: ${++n} de ${total}`);
+        const resp = await pedir(`/api/fotos/${encodeURIComponent(id)}`, { espera: 60000 });
+        let info = {};
+        try { info = JSON.parse(decodeURIComponent(resp.headers.get('x-foto') || '%7B%7D')); } catch { /* sin datos */ }
+        traidas.push({ id, blob: await resp.blob(), nombre: info.nombre, ancho: info.ancho, alto: info.alto, fecha: info.fecha });
+      }
+      contestar({ tipo: 'quimica-resultado', ok: true, estado: r.estado, fotos: traidas, enviadas: mandar.length });
+      decir('✅', 'Sincronizado con Química PC', 'Esta ventana se cierra sola. Si no, ciérrala y vuelve a la app.');
+    } catch (err) {
+      const mensaje = err && (err.name === 'TimeoutError' || err.name === 'TypeError') ? 'El PC no contesta. Mira que Química PC siga abierto y el móvil en la misma wifi' : String((err && err.message) || err);
+      contestar({ tipo: 'quimica-resultado', ok: false, error: mensaje });
+      decir('⚠️', mensaje, 'Cierra esta ventana y vuelve a la app.');
+    }
+    setTimeout(() => window.close(), 1200);
+  });
+  // Si la app no manda nada (por ejemplo, se abrió esta página a mano), se dice
+  setTimeout(() => { if (!hecho) decir('ℹ️', 'Esperando a la app…', 'Esta ventana la abre la app de Química al tocar «Sincronizar con el PC». Si no avanza, ciérrala y vuelve a la app.'); }, 8000);
+})();
+</script>
+</body>
+</html>

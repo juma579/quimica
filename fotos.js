@@ -29,7 +29,7 @@
       const t = db.transaction(ALMACEN, modo);
       const pedido = fn(t.objectStore(ALMACEN));
       t.oncomplete = () => ok(pedido ? pedido.result : undefined);
-      t.onerror = () => mal(t.error);
+      t.onerror = () => mal(t.error || new Error('No se ha podido guardar'));
       t.onabort = () => mal(t.error || new Error('No se ha podido guardar'));
     });
   };

@@ -54,15 +54,13 @@ Tus recetas, cuaderno y fotos se guardan en la carpeta `datos`, junto al program
 Con «Química PC» abierto, en su ventana salen una **dirección** y un **código**.
 
 - **Android** (la APK): en la app, ⚙️ **Ajustes → Conectar con el PC → «📷 Escanear el QR del PC»**, y apunta al código QR que sale en la app del PC. Se conecta solo. (Si prefieres, escribe la dirección y el código y pulsa **«Conectar por la wifi»**, o usa el **cable USB**.)
-- **iPhone** (y cualquier móvil, también Android sin la APK): el programa del PC **sirve la app por la wifi**, así que no hay nada que instalar en el móvil.
-  1. En la app del PC (en el navegador, ⚙️ **Ajustes**) sale un **código QR**.
-  2. En el móvil, con la misma wifi, **abre la cámara y apunta al código**. Toca el aviso que sale.
-  3. La app se abre en el móvil **ya conectada** con el PC.
-  4. Para tenerla como una app: **Compartir → «Añadir a pantalla de inicio»**.
+- **iPhone** (y cualquier móvil sin la APK), **con la app de internet** (`https://juma579.github.io/quimica/`): la usas en cualquier sitio, sin PC, y cuando estés en la misma wifi que el PC, la sincronizas.
+  1. En la app de internet: ⚙️ **Ajustes → Conectar con el PC → «📷 Escanear el QR del PC»** y apunta al código QR que sale en la app del PC (o escribe la dirección y el código).
+  2. Toca **«🔄 Sincronizar con el PC»**: se abre una ventana un momento, se pasa todo en los dos sentidos y se cierra sola.
+  3. Desde esta app **no se pasa solo**: hay que tocar «Sincronizar» (arriba sale **«💻 pasar al PC»** cuando tienes cambios sin pasar, y un aviso en la pantalla principal). Si el navegador pregunta por una ventana emergente, permítela.
+- **Otra forma, sin la app de internet:** el programa del PC **sirve la app por la wifi**. En el móvil, con la misma wifi, abre la cámara y apunta al QR de la app del PC; toca el aviso que sale y la app se abre **ya conectada** (se sincroniza sola, pero solo funciona con el PC encendido). Sus datos son distintos de los de la app de internet.
 
-  Esta versión es la que sirve tu PC, así que sus datos están en tu ordenador. La de internet (`github.io`) es otra copia distinta.
-
-Una vez conectado, las recetas, el cuaderno y las fotos pasan solos de un lado a otro y puedes trabajar en cualquiera de los dos. **Hace falta que el programa del PC esté abierto** y los dos en la misma wifi.
+Con la APK y con la app que sirve el PC, las recetas, el cuaderno y las fotos pasan solos de un lado a otro; con la de internet, al tocar «Sincronizar». En los dos casos **hace falta que el programa del PC esté abierto** y los dos en la misma wifi.
 
 > 🔒 **Seguridad:** solo entra quien tenga el código (y se bloquea tras 5 intentos fallidos). Por la wifi la información **no va cifrada**: conéctalo solo en una red de confianza (la de casa), y **cierra el programa cuando no lo uses**. Si crees que alguien ha visto el código, cámbialo en la app del PC (Ajustes → «Cambiar el código»).
 

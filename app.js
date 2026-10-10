@@ -140,7 +140,8 @@
       cuerpo);
     // En la app del PC, el estado del móvil también dentro de cada pantalla (la barra de arriba queda
     // tapada): el mismo indicador, que se actualiza con el de arriba
-    if (document.body.classList.contains('en-pc') && window.chipMovilNuevo) tit.after(window.chipMovilNuevo());
+    // (en la app del PC, si hay un móvil conectado; en la de internet, si hay cambios sin pasar al PC)
+    if (window.chipMovilNuevo) tit.after(window.chipMovilNuevo());
     document.body.append(panel);
     const capa = abrirCapa(panel, alCerrar);
     return { panel, cuerpo, titulo: tit, capa };
@@ -2334,12 +2335,14 @@
 
   // ─── La pantalla principal: los cuadernos ───
   // Todos: los creados (con o sin receta) y el de cada receta que tenga algo, lo último usado arriba
+  // (en la app de internet conectada al PC: «💻 Tienes cambios sin pasar al PC»; se pone más abajo)
+  let avisoPendientePC = () => null;
   const pintarCuadernos = () => {
     const caja = $('vista-cuadernos');
     const c = leerCuaderno();
     const lista = K.todosLosCuadernos(c);
     // Arriba, lo que les toca hoy o mañana a los grupos (o ya se pasó)
-    poner(caja, avisosDeToca(c, null, pintarCuadernos), lista.length
+    poner(caja, avisoPendientePC(), avisosDeToca(c, null, pintarCuadernos), lista.length
       ? lista.map((x) => h('button', { class: 'tarjeta cuaderno-tarjeta', onclick: () => abrirCuadernoDe(x.ambito.cuadernoId, x.ambito.recetaId, pintarCuadernos) },
         h('h3', { text: `📓 ${x.ficha.nombre}` }),
         h('p', { text: x.ambito.recetaId ? `📋 ${nombreDeReceta(c, x.ambito.recetaId)}` : 'Sin receta (solo notas)' }),
@@ -4157,6 +4160,8 @@
   let pcVisto = false; // en el navegador del PC: si de verdad es el programa (y no otra cosa en localhost)
   const conexion = () => {
     if (enElPC && pcVisto) return { base: '', codigo: '' };
+    // (en la web no se puede pedir nada al PC directamente: va por la ventana puente, al tocar un botón)
+    if (enLaWeb) return null;
     const c = leer('quimica.pc', null);
     return c && c.direccion ? { base: `http://${c.direccion}`, codigo: c.codigo || '' } : null;
   };
@@ -4279,7 +4284,143 @@
     clearTimeout(relojSincro);
     if (conexion()) relojSincro = setTimeout(() => sincronizar(), 2000);
   };
-  alCambiarDatos = () => { sellar(); programarSincro(); };
+  // ─── La app de internet (github.io) con Química PC: por una ventana puente (versión 106) ───
+  // Lo pidió el usuario: «si fuera usuario de iPhone, quiero usar la app en el móvil y luego conectarme
+  // al PC con todo sincronizado». Una página https no puede pedirle nada al PC (http): el navegador lo
+  // bloquea. Pero sí puede ABRIR una ventana con una página del PC (www/puente.html, la sirve Química
+  // PC) y pasarle mensajes: esa ventana habla con su PC y devuelve lo juntado. Los navegadores solo
+  // dejan abrir ventanas al tocar algo, así que en la web se sincroniza A MANO (botón «Sincronizar»).
+  //   quimica.pc-ultima     { fecha, huella }: la última vez que salió bien y cómo quedaron los datos
+  //   quimica.pc-pendiente  desde cuándo hay cambios aquí sin pasar al PC
+  let puenteAbierto = false;
+  const pcWeb = () => { const c = enLaWeb ? leer('quimica.pc', null) : null; return c && c.direccion ? c : null; };
+  const hayPendiente = () => {
+    if (!pcWeb()) return false;
+    const u = leer('quimica.pc-ultima', null);
+    return !u || u.huella !== S.huella(datosLocales());
+  };
+  // Los indicadores de arriba (el de la pantalla principal y los de cada panel) y el aviso de los cuadernos
+  const chipsWeb = new Set();
+  let pendienteAntes = null;
+  const pintarChipWeb = (chip) => {
+    const pc = pcWeb();
+    chip.hidden = !pc;
+    const p = hayPendiente();
+    chip.classList.toggle('con-movil', !p);
+    chip.classList.toggle('sin-movil', p);
+    chip.textContent = puenteAbierto ? '💻 sincronizando…' : p ? '💻 pasar al PC' : '💻 al día';
+    chip.title = p ? 'Hay cambios sin pasar al PC: toca para sincronizar' : 'Todo está pasado al PC. Toca para sincronizar otra vez';
+  };
+  const refrescarPendiente = () => {
+    for (const c of chipsWeb) { if (!c.isConnected && c.id !== 'b-pc') chipsWeb.delete(c); else pintarChipWeb(c); }
+    const p = hayPendiente();
+    if (p !== pendienteAntes) { pendienteAntes = p; if (!$('vista-cuadernos').hidden) pintarCuadernos(); }
+  };
+  const desdeCuando = (ms) => (new Date(ms).toDateString() === new Date().toDateString() ? `desde las ${horaDe(ms)}` : `desde el ${fechaCorta(ms)}`);
+  avisoPendientePC = () => {
+    if (!hayPendiente()) return null;
+    const u = leer('quimica.pc-ultima', null);
+    const desde = leer('quimica.pc-pendiente', null);
+    return h('button', { class: 'aviso-toca hoy aviso-pc', type: 'button', onclick: () => sincronizarPorPuente() },
+      `💻 ${u ? `Tienes cambios sin pasar al PC${desde ? ` (${desdeCuando(desde)})` : ''}` : 'Aún no has pasado tus datos al PC'} · `, h('b', { text: 'Sincronizar' }));
+  };
+  // Abre la ventana puente y sincroniza. Hay que llamarla AL TOCAR algo (si no, el navegador bloquea la
+  // ventana). Devuelve una promesa: true si salió bien
+  const sincronizarPorPuente = () => {
+    const pc = pcWeb();
+    if (!pc) return Promise.resolve(false);
+    if (puenteAbierto) { avisar('Ya se está sincronizando…'); return Promise.resolve(false); }
+    const origen = `http://${pc.direccion}`;
+    // (la ventana, lo primero: si se abre después de esperar a algo, el navegador la bloquea)
+    const w = window.open(`${origen}/puente.html`, 'quimica-puente');
+    const fallo = (error) => {
+      estadoPC = { ok: false, fecha: Date.now(), error };
+      avisar(`⚠️ ${error}`);
+      return false;
+    };
+    if (!w) return Promise.resolve(fallo('El navegador no ha dejado abrir la ventana para hablar con el PC. Permite las ventanas emergentes para esta página y vuelve a tocar «Sincronizar».'));
+    puenteAbierto = true;
+    sincronizando = true;
+    estadoPC = null;
+    refrescarPendiente();
+    if (alCambiarEstadoPC) alCambiarEstadoPC();
+    return new Promise((acabar) => {
+      let recibido = false; // la ventana ya tiene lo de aquí
+      let resultado = false; // y ya ha contestado
+      let mensaje = null;
+      let huellaAntes = null;
+      let reloj = null;
+      const empezo = Date.now();
+      const fin = (ok) => {
+        clearInterval(reloj);
+        removeEventListener('message', oir);
+        puenteAbierto = false;
+        sincronizando = false;
+        try { if (!w.closed) w.close(); } catch { /* ya cerrada */ }
+        refrescarPendiente();
+        if (alCambiarEstadoPC) alCambiarEstadoPC();
+        acabar(ok);
+      };
+      const oir = async (e) => {
+        if (e.origin !== origen || !e.data) return;
+        if (e.data.tipo === 'quimica-recibido') { recibido = true; return; }
+        if (e.data.tipo !== 'quimica-resultado' || resultado) return;
+        resultado = true;
+        if (!e.data.ok) { fin(fallo(e.data.error || 'No se ha podido sincronizar')); return; }
+        try {
+          // Si mientras tanto se ha cambiado algo aquí, no se pisa
+          if (S.huella(datosLocales()) !== huellaAntes) { fin(fallo('Has cambiado algo mientras se sincronizaba: vuelve a tocar «Sincronizar» para pasarlo también.')); return; }
+          const cambiadas = quedarse(e.data.estado);
+          let fotos = e.data.enviadas || 0;
+          for (const f of e.data.fotos || []) {
+            await window.Fotos.guardar({ id: f.id, blob: f.blob, nombre: f.nombre || 'foto', ancho: f.ancho, alto: f.alto, fecha: f.fecha || Date.now() });
+            fotos++;
+          }
+          guardar('quimica.pc-ultima', { fecha: Date.now(), huella: S.huella(datosLocales()) });
+          localStorage.removeItem('quimica.pc-pendiente');
+          estadoPC = { ok: true, fecha: Date.now(), cambios: cambiadas.length, fotos };
+          if (cambiadas.length) {
+            pintarLista();
+            oyentes = oyentes.filter((o) => o.el.isConnected);
+            for (const o of oyentes) o.fn(cambiadas);
+          }
+          avisar(`✅ Sincronizado con el PC${cambiadas.length ? ': han llegado cambios' : ''}${fotos ? ` (${fotos} ${fotos === 1 ? 'foto pasada' : 'fotos pasadas'})` : ''}`);
+          fin(true);
+        } catch (err) { fin(fallo(`No se ha podido guardar lo que llegó del PC (${(err && err.message) || err})`)); }
+      };
+      addEventListener('message', oir);
+      (async () => {
+        try {
+          const meta = sellar();
+          const datos = datosLocales();
+          huellaAntes = S.huella(datos);
+          const ids = await window.Fotos.ids().catch(() => []);
+          const fotos = [];
+          for (const id of ids) {
+            const f = await window.Fotos.leer(id).catch(() => null);
+            if (f && f.blob) fotos.push({ id, blob: f.blob, nombre: f.nombre, ancho: f.ancho, alto: f.alto, fecha: f.fecha });
+          }
+          mensaje = { tipo: 'quimica-sincronizar', codigo: pc.codigo || '', estado: S.estadoDe(meta, datos), fotos, colecciones: S.COLECCIONES };
+        } catch (err) { fin(fallo(`No se han podido preparar los datos (${(err && err.message) || err})`)); }
+      })();
+      // Lo de aquí se le manda una y otra vez hasta que diga que lo tiene (mientras carga, se pierde)
+      reloj = setInterval(() => {
+        if (resultado) return;
+        if (w.closed) { fin(fallo('Se ha cerrado la ventana antes de acabar. Vuelve a tocar «Sincronizar».')); return; }
+        if (!recibido && mensaje) { try { w.postMessage(mensaje, origen); } catch { /* aún cargando */ } }
+        if (!recibido && Date.now() - empezo > 20000) fin(fallo('No se encuentra el PC. Mira que Química PC esté abierto en el ordenador y que el móvil esté en la misma wifi.'));
+      }, 300);
+    });
+  };
+
+  alCambiarDatos = () => {
+    sellar();
+    programarSincro();
+    if (pcWeb()) {
+      if (!leer('quimica.pc-pendiente', null) && hayPendiente()) guardar('quimica.pc-pendiente', Date.now());
+      refrescarPendiente();
+    }
+  };
 
   // Comprueba que en esa dirección está Química PC y que el código vale; si sí, la guarda
   const conectarPC = async (direccion, codigo) => {
@@ -4343,8 +4484,19 @@
           const enlace = S.enlaceDePC(q.data);
           if (enlace) {
             parar();
-            estado.textContent = 'Código leído. Conectando…';
             vibrar(30);
+            // En la app de internet: se guarda y se sincroniza al tocar (la ventana puente necesita un toque)
+            if (enLaWeb) {
+              guardar('quimica.pc', { direccion: enlace.direccion, codigo: enlace.codigo });
+              localStorage.removeItem('quimica.pc-ultima');
+              estado.textContent = '✅ Código leído.';
+              poner(cuerpo, h('div', { class: 'escaner' }, estado),
+                h('button', { class: 'boton', type: 'button', text: '🔄 Sincronizar con el PC ahora', onclick: () => sincronizarPorPuente().then(() => { atras(); if (alConectar) alConectar(); }) }),
+                h('p', { class: 'nota', text: 'Se abre una ventana un momento, pasa los datos en los dos sentidos y se cierra sola.' }));
+              refrescarPendiente();
+              return;
+            }
+            estado.textContent = 'Código leído. Conectando…';
             if (await conectarPC(enlace.direccion, enlace.codigo)) { atras(); if (alConectar) alConectar(); } else estado.textContent = 'Se leyó el código pero no se pudo conectar. Mira que Química PC esté abierto y la wifi.';
             return;
           }
@@ -4363,7 +4515,9 @@
   };
   // (en el navegador del PC, «sincronizado» solo quiere decir que esta pantalla está al día con el
   // programa Química PC, no que el móvil lo esté: el móvil se ve aparte, «📱» en Ajustes)
-  const textoEstadoPC = () => (!estadoPC ? (sincronizando ? '🔄 Sincronizando…' : 'Aún no se ha sincronizado desde que abriste la app')
+  const textoEstadoPC = () => (enLaWeb && !estadoPC ? (sincronizando ? '🔄 Sincronizando… (en la ventana que se ha abierto)'
+    : leer('quimica.pc-ultima', null) ? `Última sincronización con el PC: ${haceCuanto(leer('quimica.pc-ultima', null).fecha)}` : 'Aún no has sincronizado con este PC')
+    : !estadoPC ? (sincronizando ? '🔄 Sincronizando…' : 'Aún no se ha sincronizado desde que abriste la app')
     : estadoPC.ok ? (enElPC && pcVisto ? `✅ Esta pantalla está al día con Química PC (${haceCuanto(estadoPC.fecha)})`
       : `✅ Sincronizado ${haceCuanto(estadoPC.fecha)}${estadoPC.fotos ? ` (${estadoPC.fotos} ${estadoPC.fotos === 1 ? 'foto pasada' : 'fotos pasadas'})` : ''}`)
       : `⚠️ ${estadoPC.error} (${haceCuanto(estadoPC.fecha)})`);
@@ -4388,13 +4542,19 @@
       const verMoviles = (aparatos) => {
         const lista = aparatos || [];
         const hace = (a) => haceCuanto(Date.now() - a.hace);
-        const activos = lista.filter((a) => a.hace < 45 * 1000); // la app sincroniza cada 15 s (con la app a la vista)
-        moviles.classList.toggle('sin-moviles', !activos.length);
-        moviles.classList.toggle('con-moviles', activos.length > 0);
+        // (los de la página web sincronizan a mano, al tocar «Sincronizar»: no están «sin sincronizar»)
+        const solos = lista.filter((a) => !a.manual);
+        const manuales = lista.filter((a) => a.manual);
+        const activos = solos.filter((a) => a.hace < 45 * 1000); // la app sincroniza cada 15 s (con la app a la vista)
+        const bien = activos.length > 0 || manuales.length > 0;
+        moviles.classList.toggle('sin-moviles', !bien);
+        moviles.classList.toggle('con-moviles', bien);
         poner(moviles,
-          h('b', { text: activos.length ? `📱 ${activos.length === 1 ? 'Móvil conectado' : `${activos.length} móviles conectados`}` : lista.length ? '📱 Móvil sin sincronizar ahora' : '📱 Ningún móvil conectado' }),
-          lista.map((a) => h('span', { class: 'movil-linea', text: `${a.nombre} · última sincronización ${hace(a)}` })),
-          !activos.length && h('span', { class: 'movil-linea', text: lista.length ? 'Abre la app en el móvil (con la misma wifi) y se sincroniza sola.' : 'Escanea con el móvil el código QR de aquí abajo.' }));
+          h('b', { text: activos.length ? `📱 ${activos.length === 1 ? 'Móvil conectado' : `${activos.length} móviles conectados`}`
+            : manuales.length ? '📱 Móvil que sincroniza a mano' : solos.length ? '📱 Móvil sin sincronizar ahora' : '📱 Ningún móvil conectado' }),
+          lista.map((a) => h('span', { class: 'movil-linea', text: `${[a.tipo, a.nombre].filter(Boolean).join(' ')} · ${a.manual ? 'desde la página web, a mano · ' : ''}última sincronización ${hace(a)}` })),
+          !activos.length && h('span', { class: 'movil-linea', text: manuales.length ? 'Desde la página web, los cambios se pasan cuando en el móvil se toca «🔄 Sincronizar con el PC» (con la misma wifi).'
+            : solos.length ? 'Abre la app en el móvil (con la misma wifi) y se sincroniza sola.' : 'Escanea con el móvil el código QR de aquí abajo.' }));
       };
       const mirarMoviles = () => {
         if (!moviles.isConnected) return;
@@ -4450,7 +4610,7 @@
           h('ol', { class: 'pasos-qr' },
             h('li', { text: 'El móvil, en la misma wifi que este PC.' }),
             h('li', {}, h('b', { text: 'iPhone:' }), ' abre la cámara y apunta al código; toca el aviso que sale.'),
-            h('li', {}, h('b', { text: 'App de Android:' }), ' Ajustes → Conectar con el PC → «📷 Escanear el QR del PC».'),
+            h('li', {}, h('b', { text: 'App de Android, o la de internet (github.io):' }), ' Ajustes → Conectar con el PC → «📷 Escanear el QR del PC». En la de internet, después, «🔄 Sincronizar con el PC» cada vez que quieras pasar los datos.'),
             h('li', { text: 'Listo: arriba pasará a «Móvil conectado».' })),
           h('div', { class: 'qr-dibujo', role: 'img', 'aria-label': `Código QR con el enlace ${dir}` }, svg),
           h('p', { class: 'nota', text: 'En el iPhone, después: «Compartir → Añadir a pantalla de inicio» para tenerla como una app.' }));
@@ -4472,6 +4632,25 @@
       return [moviles, caja, info, cambiarCodigo];
     }
     const pc = leer('quimica.pc', null);
+    // La app de internet: a mano, por la ventana puente (versión 106)
+    if (enLaWeb && pc && pc.direccion) {
+      const pendiente = h('p', { class: 'nota aviso-texto' });
+      const verPendiente = () => { pendiente.textContent = hayPendiente() ? '⚠️ Hay cambios aquí que aún no has pasado al PC.' : ''; pendiente.hidden = !hayPendiente(); };
+      alCambiarEstadoPC = () => { if (estado.isConnected) { estado.textContent = textoEstadoPC(); verPendiente(); } };
+      verPendiente();
+      return [
+        h('p', {}, '💻 Conectado con ', h('b', { text: pc.direccion })),
+        h('p', { class: 'nota', text: 'Desde esta página los datos se pasan cuando tocas «Sincronizar», con el móvil en la misma wifi que el PC y Química PC abierto: se abre una ventana un momento y se cierra sola. Mientras tanto, la app funciona igual sin el PC.' }),
+        estado, pendiente,
+        h('button', { class: 'boton', type: 'button', text: '🔄 Sincronizar con el PC', onclick: () => sincronizarPorPuente() }),
+        h('button', { class: 'boton discreto', type: 'button', text: 'Desconectar del PC', onclick: async () => {
+          if (!await preguntar({ texto: '¿Desconectar del PC?', detalle: 'Lo que hay aquí se queda. Dejará de pasarse al PC.', si: 'Desconectar' })) return;
+          for (const k of ['quimica.pc', 'quimica.pc-ultima', 'quimica.pc-pendiente']) localStorage.removeItem(k);
+          estadoPC = null;
+          refrescarPendiente();
+          pintar();
+        } })];
+    }
     if (pc && pc.direccion) {
       return [
         h('p', {}, '💻 Conectado con ', h('b', { text: pc.direccion === 'localhost:8765' ? 'el PC por cable USB' : pc.direccion })),
@@ -4502,14 +4681,26 @@
     };
     const porWifi = h('button', { class: 'boton', text: '📶 Conectar por la wifi', onclick: () => {
       if (!direccion.value.trim() || !/^\d{6}$/.test(codigo.value.trim())) { avisar('Escribe la dirección y el código de 6 números que enseña Química PC'); return; }
+      if (enLaWeb) {
+        // (en la web, conectar ES sincronizar por la ventana puente, ya, con este toque; si no sale, no se guarda)
+        const d = direccion.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+        guardar('quimica.pc', { direccion: /:\d+$/.test(d) ? d : `${d}:8765`, codigo: codigo.value.trim() });
+        localStorage.removeItem('quimica.pc-ultima');
+        sincronizarPorPuente().then((ok) => { if (!ok) localStorage.removeItem('quimica.pc'); refrescarPendiente(); pintar(); });
+        return;
+      }
       conectar(porWifi, direccion.value, codigo.value);
     } });
     const porCable = h('button', { class: 'boton secundario', text: '🔌 Por cable USB', onclick: () => conectar(porCable, 'localhost:8765', '') });
-    // En la app de Android (y donde pueda hablar con el PC): escanear el QR con la cámara
-    const escanear = !desdeElPC && !enLaWeb && h('button', { class: 'boton', text: '📷 Escanear el QR del PC', onclick: () => escanearQR(() => pintar()) });
+    // En la app de Android y en la de internet: escanear el QR con la cámara
+    const escanear = !desdeElPC && h('button', { class: 'boton', text: '📷 Escanear el QR del PC', onclick: () => escanearQR(() => pintar()) });
     return [
       escanear,
-      h('p', { class: 'nota', text: 'Con el programa Química PC abierto en tu ordenador, tendrás aquí y allí las mismas recetas, el cuaderno y las fotos, y podrás escribir en cualquiera de los dos. La dirección y el código salen en la ventana de Química PC.' }),
+      enLaWeb
+        ? [h('p', { class: 'nota', text: 'Con Química PC abierto en tu ordenador y este móvil en la misma wifi, puedes pasar tus recetas, el cuaderno y las fotos al PC (y traer lo del PC) cuando quieras, tocando «Sincronizar». Desde esta página no se pasan solos: la app te avisa cuando tengas cambios sin pasar.' }),
+          /Android/i.test(navigator.userAgent) && h('p', { class: 'nota' }, 'En Android, la app instalada se sincroniza sola (y sus alarmas suenan con la app cerrada): ',
+            h('a', { href: 'https://github.com/juma579/quimica/releases/latest', target: '_blank', rel: 'noopener', text: 'descargar la APK' }), '.')]
+        : h('p', { class: 'nota', text: 'Con el programa Química PC abierto en tu ordenador, tendrás aquí y allí las mismas recetas, el cuaderno y las fotos, y podrás escribir en cualquiera de los dos. La dirección y el código salen en la ventana de Química PC.' }),
       desdeElPC && h('p', { class: 'nota', text: '📷 Más fácil: en la app del PC (Ajustes) hay un código QR. Escanéalo con la cámara de este móvil y se conecta solo. Si no, escribe el código que sale en el PC:' }),
       direccion, codigo, porWifi, !desdeElPC && porCable,
       h('p', { class: 'nota', text: 'Por la wifi: el móvil y el PC en la misma red (en algunas wifis de universidad no se ven entre sí; entonces, por cable). Por cable: con la depuración USB activada.' })];
@@ -4541,18 +4732,7 @@
               avisar('Clave guardada');
             } })],
         h('h3', { text: '💻 Conectar con el PC' }),
-        enLaWeb
-          ? [
-            h('p', { class: 'nota', text: 'Esta página (la de internet) no puede hablar con Química PC: el navegador no lo deja. Para conectarte:' }),
-            h('ol', { class: 'pasos-qr' },
-              h('li', { text: 'Abre Química PC en tu ordenador y ve a ⚙️ Ajustes: sale un código QR.' }),
-              h('li', { text: 'Con el móvil en la misma wifi, apunta la cámara al QR y toca el enlace que sale: se abre la app que sirve tu PC, ya conectada.' }),
-              h('li', { text: 'Para tenerla como una app: menú del navegador → «Añadir a pantalla de inicio».' })),
-            h('p', { class: 'nota', text: 'Ojo: esa app y esta página guardan cosas distintas. Si ya tienes recetas aquí, haz abajo una «Copia de seguridad de todo» y recupérala allí.' }),
-            /Android/i.test(navigator.userAgent) && h('p', { class: 'nota' }, 'En Android también puedes instalar la app de verdad (con alarmas que suenan con la app cerrada, y escanea el QR desde Ajustes): ',
-              h('a', { href: 'https://github.com/juma579/quimica/releases/latest', target: '_blank', rel: 'noopener', text: 'descargar la APK' }), '.'),
-          ]
-          : seccionPC(pintar),
+        seccionPC(pintar),
         h('h3', { text: '📱 Pantalla de la receta' }),
         h('label', { class: 'parte-opcion' },
           h('input', { type: 'checkbox', checked: leer('quimica.receta-junta', false) === true, onchange: (e) => guardar('quimica.receta-junta', e.target.checked) }),
@@ -4728,13 +4908,17 @@
   // Conectado = sincronizó hace menos de 45 s (el móvil sincroniza cada 15 s con la app a la vista)
   const vigilarMoviles = () => {
     const chips = new Set(); // el de arriba y los de dentro de cada pantalla abierta
-    let ultimo = { activos: 0, lista: 0 };
+    // (manual: el último que sincroniza desde la página web, a mano; no está «desconectado» por no sincronizar)
+    let ultimo = { activos: 0, lista: 0, manual: null };
     const pintarUno = (chip) => {
-      const { activos, lista } = ultimo;
-      chip.classList.toggle('con-movil', activos > 0);
-      chip.classList.toggle('sin-movil', activos === 0);
-      chip.textContent = activos > 0 ? '📱 conectado' : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
-      chip.title = activos > 0 ? 'Hay un móvil sincronizando con este PC' : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
+      const { activos, lista, manual } = ultimo;
+      const bien = activos > 0 || Boolean(manual);
+      chip.classList.toggle('con-movil', bien);
+      chip.classList.toggle('sin-movil', !bien);
+      chip.textContent = activos > 0 ? '📱 conectado' : manual ? `📱 a mano · ${haceCuanto(Date.now() - manual.hace)}` : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
+      chip.title = activos > 0 ? 'Hay un móvil sincronizando con este PC'
+        : manual ? 'Un móvil con la app de internet sincroniza con este PC cuando lo pide (botón «Sincronizar» del móvil)'
+          : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
     };
     const nuevo = (id) => {
       const c = h('button', { ...(id ? { id } : {}), class: 'chip-movil sin-movil', type: 'button', 'aria-label': 'Estado del móvil: ver en Ajustes',
@@ -4744,19 +4928,29 @@
       return c;
     };
     // (los de pantallas ya cerradas se van quitando)
-    const pintarChip = (activos, lista) => {
-      ultimo = { activos, lista };
+    const pintarChip = (activos, lista, manual) => {
+      ultimo = { activos, lista, manual };
       for (const c of chips) { if (!c.isConnected && c.id !== 'b-movil') chips.delete(c); else pintarUno(c); }
     };
     window.chipMovilNuevo = () => nuevo();
     $('b-ajustes').before(nuevo('b-movil'));
+    const avisadas = new Map(); // los que sincronizan a mano: cuándo se avisó de su última vez
     let habia = null; // si había un móvil conectado en la última mirada (null: aún no se ha mirado)
     const mirar = async () => {
       try {
         const r = await (await pedirPC('', '', '/api/hola', { espera: 4000 })).json();
         const lista = r.aparatos || [];
-        const activos = lista.filter((a) => a.hace < 45 * 1000).length;
-        pintarChip(activos, lista.length);
+        // (los que sincronizan a mano no cuentan para «conectado / ya no está conectado»)
+        const activos = lista.filter((a) => !a.manual && a.hace < 45 * 1000).length;
+        const manuales = lista.filter((a) => a.manual).sort((a, b) => a.hace - b.hace);
+        pintarChip(activos, lista.filter((a) => !a.manual).length, manuales[0] || null);
+        // Cada vez que uno de esos sincroniza, se dice (una vez por sincronización)
+        // (por el nº de veces que ha sincronizado, que da el programa: por la hora, dos seguidas se confundían)
+        for (const a of manuales) {
+          const antes = avisadas.get(a.nombre);
+          if (antes !== undefined && a.veces > antes) avisar(`📱 ${[a.tipo, a.nombre].filter(Boolean).join(' ')} ha sincronizado con este PC (desde la página web)`);
+          avisadas.set(a.nombre, a.veces);
+        }
         if (habia !== null && habia !== activos > 0) {
           avisar(activos > 0 ? '📱 Móvil conectado: ya se sincroniza con este PC' : '📱 El móvil ya no está conectado: sus cambios no llegan a este PC hasta que vuelva a conectarse',
             activos > 0 ? null : { texto: 'Ver', hacer: () => $('b-ajustes').click() });
@@ -4774,6 +4968,18 @@
     if (enElPC) {
       try { pcVisto = (await (await pedirPC('', '', '/api/hola', { espera: 3000 })).json()).app === 'quimica-pc'; } catch { pcVisto = false; }
       if (pcVisto) { document.title = 'Química (PC)'; document.body.classList.add('en-pc'); vigilarMoviles(); }
+    }
+    // En la app de internet conectada al PC: «💻 al día» o «💻 pasar al PC», que al tocarlo sincroniza
+    if (enLaWeb) {
+      const nuevo = (id) => {
+        const c = h('button', { ...(id ? { id } : {}), class: 'chip-movil', type: 'button', 'aria-label': 'Sincronizar con el PC', onclick: () => sincronizarPorPuente() });
+        chipsWeb.add(c);
+        pintarChipWeb(c);
+        return c;
+      };
+      window.chipMovilNuevo = () => nuevo();
+      $('b-ajustes').before(nuevo('b-pc'));
+      refrescarPendiente();
     }
     sincronizar();
     setInterval(() => { if (document.visibilityState === 'visible') sincronizar(); }, 15000);
