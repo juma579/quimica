@@ -4794,7 +4794,10 @@
           avisar(`${buenas.length} ${buenas.length === 1 ? 'receta recuperada' : 'recetas recuperadas'}${buenas.length < lista.length ? ` (${lista.length - buenas.length} no valían)` : ''}`);
           pintar();
         } }),
-        h('p', { class: 'nota', text: `Versión de la app: ${typeof VERSION_WEB === 'string' ? VERSION_WEB : '?'}` }));
+        h('h3', { text: 'ℹ️ Sobre la app' }),
+        h('p', { class: 'nota', text: `Versión de la app: ${typeof VERSION_WEB === 'string' ? VERSION_WEB : '?'}` }),
+        h('p', { class: 'nota' }, '🔗 Descargas (Android y PC), instrucciones y novedades: ',
+          h('a', { href: 'https://github.com/juma579/quimica', target: '_blank', rel: 'noopener', text: 'github.com/juma579/quimica' })));
     };
     pintar();
   };
