@@ -676,3 +676,10 @@ small.aviso-sentido[hidden] { display: none; }
 .movil-linea { font-size: 14px; }
 .pasos-qr { margin: 6px 0 6px 20px; padding: 0; font-size: 14.5px; line-height: 1.5; }
 @media (prefers-color-scheme: dark) { .moviles-pc.con-moviles { background: #1d3a24; color: #b7e4bf; border-left-color: #66bb6a; } }
+
+/* El estado del móvil, siempre arriba en la app del PC (versión 102) */
+.chip-movil { margin-left: auto; padding: 6px 12px; border-radius: 999px; border: 0; font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.chip-movil.con-movil { background: #c9eccf; color: #14451c; }
+.chip-movil.sin-movil { background: #ffe9b0; color: #5a3d00; }
+.chip-movil + .icono { margin-left: 4px; }
+@media (prefers-color-scheme: dark) { .chip-movil.con-movil { background: #1d3a24; color: #b7e4bf; } .chip-movil.sin-movil { background: #4a3a10; color: #ffe39a; } }

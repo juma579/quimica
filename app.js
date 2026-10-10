@@ -4688,11 +4688,44 @@
     revisarCronometros();
     sincronizar();
   });
+  // En la app del PC, siempre a la vista (versión 102, lo pidió el usuario: «debería salir un aviso en
+  // el PC de que no estás conectado»): un indicador arriba, junto a Ajustes, con si hay un móvil
+  // sincronizando (verde) o no (amarillo), y un aviso cuando uno se conecta o se desconecta.
+  // Conectado = sincronizó hace menos de 45 s (el móvil sincroniza cada 15 s con la app a la vista)
+  const vigilarMoviles = () => {
+    const chip = h('button', { id: 'b-movil', class: 'chip-movil sin-movil', type: 'button', 'aria-label': 'Estado del móvil: ver en Ajustes',
+      onclick: () => $('b-ajustes').click() });
+    $('b-ajustes').before(chip);
+    let habia = null; // si había un móvil conectado en la última mirada (null: aún no se ha mirado)
+    const pintarChip = (activos, lista) => {
+      chip.classList.toggle('con-movil', activos > 0);
+      chip.classList.toggle('sin-movil', activos === 0);
+      chip.textContent = activos > 0 ? '📱 conectado' : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
+      chip.title = activos > 0 ? 'Hay un móvil sincronizando con este PC' : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
+    };
+    const mirar = async () => {
+      try {
+        const r = await (await pedirPC('', '', '/api/hola', { espera: 4000 })).json();
+        const lista = r.aparatos || [];
+        const activos = lista.filter((a) => a.hace < 45 * 1000).length;
+        pintarChip(activos, lista.length);
+        if (habia !== null && habia !== activos > 0) {
+          avisar(activos > 0 ? '📱 Móvil conectado: ya se sincroniza con este PC' : '📱 El móvil ya no está conectado: sus cambios no llegan a este PC hasta que vuelva a conectarse',
+            activos > 0 ? null : { texto: 'Ver', hacer: () => $('b-ajustes').click() });
+        }
+        habia = activos > 0;
+      } catch {
+        // (el programa del PC no contesta: se deja el último estado)
+      }
+    };
+    mirar();
+    setInterval(() => { if (document.visibilityState === 'visible') mirar(); }, 5000);
+  };
   // La conexión con el PC: al abrir, al volver a la app y cada 15 s (si hay PC)
   (async () => {
     if (enElPC) {
       try { pcVisto = (await (await pedirPC('', '', '/api/hola', { espera: 3000 })).json()).app === 'quimica-pc'; } catch { pcVisto = false; }
-      if (pcVisto) { document.title = 'Química (PC)'; document.body.classList.add('en-pc'); }
+      if (pcVisto) { document.title = 'Química (PC)'; document.body.classList.add('en-pc'); vigilarMoviles(); }
     }
     sincronizar();
     setInterval(() => { if (document.visibilityState === 'visible') sincronizar(); }, 15000);
