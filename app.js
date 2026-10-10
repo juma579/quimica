@@ -4385,7 +4385,7 @@
       const verMoviles = (aparatos) => {
         const lista = aparatos || [];
         const hace = (a) => haceCuanto(Date.now() - a.hace);
-        const activos = lista.filter((a) => a.hace < 2 * 60 * 1000); // la app sincroniza cada 15 s
+        const activos = lista.filter((a) => a.hace < 45 * 1000); // la app sincroniza cada 15 s (con la app a la vista)
         moviles.classList.toggle('sin-moviles', !activos.length);
         moviles.classList.toggle('con-moviles', activos.length > 0);
         poner(moviles,
@@ -4396,9 +4396,9 @@
       const mirarMoviles = () => {
         if (!moviles.isConnected) return;
         pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => verMoviles(r.aparatos)).catch(() => {});
-        setTimeout(mirarMoviles, 10000);
+        setTimeout(mirarMoviles, 4000);
       };
-      setTimeout(mirarMoviles, 10000);
+      setTimeout(mirarMoviles, 4000);
       pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
         h('p', { class: 'nota', text: 'A mano, sin QR (en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC):' }),
         h('p', {}, 'Dirección: ', h('b', { text: (r.direcciones || []).join('  o  ') || '(este PC no está en ninguna red)' })),
@@ -4454,6 +4454,9 @@
         estado, ahora,
         h('button', { class: 'boton discreto', text: 'Desconectar del PC', onclick: async () => {
           if (!await preguntar({ texto: '¿Desconectar del PC?', detalle: 'Lo que hay en el móvil se queda. Dejará de pasarse al PC.', si: 'Desconectar' })) return;
+          // Se avisa al PC para que deje de contarlo como conectado (si no se le encuentra, da igual)
+          const c = conexion();
+          if (c) { try { await pedirPC(c.base, c.codigo, '/api/desconectar', { method: 'POST', espera: 3000 }); } catch { /* sin PC a la vista */ } }
           localStorage.removeItem('quimica.pc');
           estadoPC = null;
           pintar();
