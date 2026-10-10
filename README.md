@@ -36,14 +36,36 @@ Te sale un icono de un matraz azul. Ábrela desde ahí, como cualquier otra app.
 
 ## 💻 Usarla en el ordenador
 
-Abre la dirección en cualquier navegador. No hace falta instalar nada.
+Hay dos maneras:
+
+**A. Sin instalar nada** (lo más fácil): abre la dirección de arriba en cualquier navegador. Tus datos se guardan en ese navegador.
+
+**B. Con «Química PC»** (para tener tus datos en el ordenador y **pasarlos solos entre el ordenador y el móvil**):
+
+1. Instala **[Node.js](https://nodejs.org)** (una sola vez; botón verde «LTS», «siguiente, siguiente»).
+2. Baja **`Quimica-PC-….zip`** de **https://github.com/juma579/quimica/releases/latest** (en «Assets»).
+3. Descomprímelo donde quieras y haz doble clic en **`Quimica PC.bat`**.
+4. Se abre el navegador con la app. Deja abierta la ventana negra mientras la uses.
+
+Tus recetas, cuaderno y fotos se guardan en `Documentos\Quimica PC` (también una copia diaria). Funciona en **Windows**; en Mac o Linux, con `node pc/servidor.js`.
+
+### 🔗 Conectar el móvil con el ordenador
+
+Con «Química PC» abierto, en su ventana salen una **dirección** y un **código**.
+
+- **Android** (la APK): en la app, ⚙️ **Ajustes → Conectar con el PC**, escribe la dirección y el código y pulsa **«Conectar por la wifi»**. También se puede por **cable USB** (con las herramientas de Android).
+- **iPhone**: de momento **no se puede** conectar al ordenador (Safari no deja que una app instalada desde internet hable con un programa del PC). Usa la copia de seguridad de Ajustes.
+
+Una vez conectado, las recetas, el cuaderno y las fotos pasan solos de un lado a otro y puedes trabajar en cualquiera de los dos.
+
+> 🔒 **Seguridad:** solo entra quien tenga el código (y se bloquea tras 5 intentos fallidos). Por la wifi la información **no va cifrada**: conéctalo solo en una red de confianza (la de casa), y **cierra el programa cuando no lo uses**. Si crees que alguien ha visto el código, cámbialo en la app del PC (Ajustes → «Cambiar el código»).
 
 ---
 
 ## ❓ Cosas que conviene saber
 
-- **Tus datos son solo tuyos y están solo en tu aparato.** Tus recetas, cuadernos y fotos no se suben a ningún sitio. Nadie más los ve, y tú no ves los de nadie.
-- **Si borras los datos del navegador o quitas la app de la pantalla de inicio, se pierden.** En ⚙️ **Ajustes** hay «Copiar todas las recetas» para guardar una copia. Y con **«📄 Hacer un informe»** (dentro de un cuaderno) puedes guardar el cuaderno en PDF.
+- **Tus datos son solo tuyos y están solo en tu aparato** (y en tu ordenador, si usas Química PC). Tus recetas, cuadernos y fotos no se suben a ningún sitio de internet. Nadie más los ve, y tú no ves los de nadie.
+- **Si borras los datos del navegador o quitas la app de la pantalla de inicio, se pierden.** En ⚙️ **Ajustes** hay **«💾 Guardar la copia en un archivo»** (recetas, cuaderno y fotos) y para recuperarla. Y con **«📄 Hacer un informe»** (dentro de un cuaderno) puedes guardar el cuaderno en PDF.
 - **Para convertir un texto en receta con la IA** hace falta una clave gratuita de Gemini (Google): se pide en https://aistudio.google.com/apikey y se pega en ⚙️ **Ajustes**. Es opcional: también se pueden escribir las recetas a mano, y las cuentas las hace la app igual.
 - **Los cronómetros** avisan con tres pitidos y vibración, pero **solo con la app abierta** (en el iPhone no pueden sonar con la app cerrada).
 - **Se actualiza sola.** La próxima vez que la abras con internet, coge la versión nueva.
