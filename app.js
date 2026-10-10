@@ -4592,6 +4592,28 @@
             cargarInfo();
           } catch { avisar('No se ha podido cambiar la carpeta'); }
         } }),
+        // Usar una carpeta que YA tiene datos (versión 110): por ejemplo, tras descargar el programa en otro sitio
+        h('button', { class: 'boton secundario', type: 'button', text: '📂 Usar una carpeta que ya tiene mis datos…', onclick: async () => {
+          let cuerpo = { usar: true, elegir: true };
+          if (!await preguntar({ texto: '¿Usar otra carpeta de datos?', detalle: 'Se dejará de usar la carpeta de ahora y se usará la que elijas, con sus recetas, cuaderno y fotos tal cual (no se copia nada). La de ahora no se borra. Los móviles conectados tendrán que poner el código de esa carpeta.', si: 'Elegir la carpeta', no: 'Cancelar' })) return;
+          if (!r.dialogoCarpeta) {
+            const ruta = await preguntar({ texto: '📂 Carpeta con tus datos', detalle: 'Escribe la ruta completa de la carpeta que ya tiene tus datos (la que tiene datos.json).',
+              campo: { placeholder: '/ruta/completa/de/la/carpeta', 'aria-label': 'Carpeta con tus datos', autocapitalize: 'off' }, si: 'Usar', no: 'Cancelar' });
+            if (!ruta || !ruta.trim()) return;
+            cuerpo = { usar: true, carpeta: ruta.trim() };
+          } else {
+            avisar('Se ha abierto el cuadro de carpetas en este PC (si no lo ves, puede estar detrás del navegador)');
+          }
+          try {
+            const resp = await fetch('/api/carpeta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+            const j = await resp.json();
+            if (!resp.ok) { avisar(j.error || 'No se ha podido usar esa carpeta'); return; }
+            if (j.cancelado) { avisar('No se ha cambiado nada'); return; }
+            avisar(`Hecho: se usa la carpeta ${j.carpeta}. Los móviles tendrán que conectarse con el código de esta carpeta.`);
+            cargarInfo();
+            sincronizar();
+          } catch { avisar('No se ha podido usar esa carpeta'); }
+        } }),
         h('p', { class: 'nota', text: '🔒 Por la wifi, conéctalo solo en una red de confianza (la de casa): lo que se pasa no va cifrado. En una wifi pública o de la universidad, mejor el cable.' }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
       cargarInfo();
       // El QR para el iPhone (y cualquier móvil): abre la app desde el PC y se conecta con el código.
