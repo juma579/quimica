@@ -4379,13 +4379,19 @@
       // En el navegador del PC: lo que hay que escribir en el móvil
       const info = h('div', { class: 'caja datos-pc' }, h('p', { class: 'nota', text: 'Buscando…' }));
       // Qué móviles han sincronizado y cuándo (se vuelve a mirar cada 10 s mientras está abierto)
-      const moviles = h('p', { class: 'moviles-pc' });
+      // Una sola respuesta, arriba y clara (versión 100, el usuario dijo que era confuso): o hay un
+      // móvil sincronizando ahora (verde) o no (amarillo, y qué hacer)
+      const moviles = h('div', { class: 'moviles-pc sin-moviles' });
       const verMoviles = (aparatos) => {
-        const nuevos = (aparatos || []).length
-          ? aparatos.map((a) => `${a.nombre}: sincronizó ${haceCuanto(Date.now() - a.hace)}`).join(' · ')
-          : 'Ningún móvil ha sincronizado desde que abriste Química PC.';
-        moviles.textContent = `📱 ${nuevos}`;
-        moviles.classList.toggle('sin-moviles', !(aparatos || []).length);
+        const lista = aparatos || [];
+        const hace = (a) => haceCuanto(Date.now() - a.hace);
+        const activos = lista.filter((a) => a.hace < 2 * 60 * 1000); // la app sincroniza cada 15 s
+        moviles.classList.toggle('sin-moviles', !activos.length);
+        moviles.classList.toggle('con-moviles', activos.length > 0);
+        poner(moviles,
+          h('b', { text: activos.length ? `📱 ${activos.length === 1 ? 'Móvil conectado' : `${activos.length} móviles conectados`}` : lista.length ? '📱 Móvil sin sincronizar ahora' : '📱 Ningún móvil conectado' }),
+          lista.map((a) => h('span', { class: 'movil-linea', text: `${a.nombre} · última sincronización ${hace(a)}` })),
+          !activos.length && h('span', { class: 'movil-linea', text: lista.length ? 'Abre la app en el móvil (con la misma wifi) y se sincroniza sola.' : 'Escanea con el móvil el código QR de aquí abajo.' }));
       };
       const mirarMoviles = () => {
         if (!moviles.isConnected) return;
@@ -4394,7 +4400,7 @@
       };
       setTimeout(mirarMoviles, 10000);
       pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
-        h('p', { text: 'Esta es la app en el PC. Para conectar el móvil, en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC, y escribe:' }),
+        h('p', { class: 'nota', text: 'A mano, sin QR (en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC):' }),
         h('p', {}, 'Dirección: ', h('b', { text: (r.direcciones || []).join('  o  ') || '(este PC no está en ninguna red)' })),
         h('p', {}, 'Código: ', h('b', { class: 'codigo-pc', text: r.codigo })),
         // (lo del cable solo si este PC tiene las herramientas de Android; la carpeta es la de quien lo abre)
@@ -4415,10 +4421,14 @@
         q.make();
         const svg = new DOMParser().parseFromString(q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }), 'image/svg+xml').documentElement;
         poner(caja,
-          h('p', {}, h('b', { text: '📷 Para el iPhone o cualquier móvil' })),
-          h('p', { class: 'nota', text: 'Con el móvil en la misma wifi que este PC, abre la cámara y apunta al código: toca el aviso que sale y la app se abre ya conectada. Después, «Compartir → Añadir a pantalla de inicio» para tenerla como una app.' }),
+          h('p', {}, h('b', { text: '📷 Conectar un móvil' })),
+          h('ol', { class: 'pasos-qr' },
+            h('li', { text: 'El móvil, en la misma wifi que este PC.' }),
+            h('li', {}, h('b', { text: 'iPhone:' }), ' abre la cámara y apunta al código; toca el aviso que sale.'),
+            h('li', {}, h('b', { text: 'App de Android:' }), ' Ajustes → Conectar con el PC → «📷 Escanear el QR del PC».'),
+            h('li', { text: 'Listo: arriba pasará a «Móvil conectado».' })),
           h('div', { class: 'qr-dibujo', role: 'img', 'aria-label': `Código QR con el enlace ${dir}` }, svg),
-          h('p', { class: 'nota', text: `O escribe en el navegador del móvil: http://${dir}  y el código ${r.codigo}.` }));
+          h('p', { class: 'nota', text: 'En el iPhone, después: «Compartir → Añadir a pantalla de inicio» para tenerla como una app.' }));
       }).catch(() => {});
       dibujarQR();
       // Un código nuevo, por si alguien ha visto el de ahora (versión 96)
@@ -4432,7 +4442,9 @@
           dibujarQR();
         } catch { avisar('No se ha podido cambiar el código'); }
       } });
-      return [info, moviles, caja, estado, ahora, cambiarCodigo];
+      // (aquí no van «Sincronizar ahora» ni «✅ al día»: esta pantalla habla con el programa del mismo
+      // PC y eso siempre está al día; lo que importa es el móvil, arriba)
+      return [moviles, caja, info, cambiarCodigo];
     }
     const pc = leer('quimica.pc', null);
     if (pc && pc.direccion) {

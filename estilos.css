@@ -667,3 +667,12 @@ small.aviso-sentido[hidden] { display: none; }
 /* Qué móviles han sincronizado con el PC (versión 99) */
 .moviles-pc { margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: var(--color-suave); color: var(--texto); font-size: 14.5px; }
 .moviles-pc.sin-moviles { background: var(--aviso-fondo); color: var(--aviso-texto); }
+
+/* El estado del móvil en la app del PC, claro y arriba (versión 100) */
+.moviles-pc { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 12px; padding: 12px 14px; border-radius: 12px; font-size: 15px; }
+.moviles-pc b { font-size: 17px; }
+.moviles-pc.con-moviles { background: #e3f4e6; color: #17481f; border-left: 5px solid #2e7d32; }
+.moviles-pc.sin-moviles { border-left: 5px solid #e08a00; }
+.movil-linea { font-size: 14px; }
+.pasos-qr { margin: 6px 0 6px 20px; padding: 0; font-size: 14.5px; line-height: 1.5; }
+@media (prefers-color-scheme: dark) { .moviles-pc.con-moviles { background: #1d3a24; color: #b7e4bf; border-left-color: #66bb6a; } }
