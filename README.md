@@ -54,9 +54,15 @@ Tus recetas, cuaderno y fotos se guardan en `Documentos\Quimica PC` (también un
 Con «Química PC» abierto, en su ventana salen una **dirección** y un **código**.
 
 - **Android** (la APK): en la app, ⚙️ **Ajustes → Conectar con el PC**, escribe la dirección y el código y pulsa **«Conectar por la wifi»**. También se puede por **cable USB** (con las herramientas de Android).
-- **iPhone**: de momento **no se puede** conectar al ordenador (Safari no deja que una app instalada desde internet hable con un programa del PC). Usa la copia de seguridad de Ajustes.
+- **iPhone** (y cualquier móvil, también Android sin la APK): el programa del PC **sirve la app por la wifi**, así que no hay nada que instalar en el móvil.
+  1. En la app del PC (en el navegador, ⚙️ **Ajustes**) sale un **código QR**.
+  2. En el móvil, con la misma wifi, **abre la cámara y apunta al código**. Toca el aviso que sale.
+  3. La app se abre en el móvil **ya conectada** con el PC.
+  4. Para tenerla como una app: **Compartir → «Añadir a pantalla de inicio»**.
 
-Una vez conectado, las recetas, el cuaderno y las fotos pasan solos de un lado a otro y puedes trabajar en cualquiera de los dos.
+  Esta versión es la que sirve tu PC, así que sus datos están en tu ordenador. La de internet (`github.io`) es otra copia distinta.
+
+Una vez conectado, las recetas, el cuaderno y las fotos pasan solos de un lado a otro y puedes trabajar en cualquiera de los dos. **Hace falta que el programa del PC esté abierto** y los dos en la misma wifi.
 
 > 🔒 **Seguridad:** solo entra quien tenga el código (y se bloquea tras 5 intentos fallidos). Por la wifi la información **no va cifrada**: conéctalo solo en una red de confianza (la de casa), y **cierra el programa cuando no lo uses**. Si crees que alguien ha visto el código, cámbialo en la app del PC (Ajustes → «Cambiar el código»).
 

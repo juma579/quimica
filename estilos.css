@@ -652,3 +652,9 @@ small.aviso-sentido[hidden] { display: none; }
 .tabla-fotos td.celda-foto { vertical-align: top; min-width: 96px; padding: 4px; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 10px; }
 .foto-mini { display: block; width: 88px; height: 66px; margin: 0 0 4px; padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: #0003; }
 .foto-mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* El QR de la app del PC (versión 97): para abrir la app desde el iPhone con el código ya puesto */
+.qr-pc { margin: 12px 0; padding: 12px; border-radius: 12px; background: var(--tarjeta); border: 1px solid var(--borde); }
+.qr-pc:empty { display: none; }
+.qr-dibujo { width: 240px; max-width: 100%; margin: 8px auto; padding: 8px; border-radius: 8px; background: #fff; line-height: 0; }
+.qr-dibujo svg { width: 100%; height: auto; display: block; }

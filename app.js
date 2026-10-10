@@ -4136,6 +4136,17 @@
   // En el navegador del PC la app la sirve el propio programa: se habla con él sin código
   const enElPC = !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
     && ['localhost', '127.0.0.1'].includes(location.hostname) && location.protocol === 'http:';
+  // La app abierta desde la dirección del PC por la wifi (http://192.168.x.x:8765, la que sirve el
+  // programa Química PC): lo que se escanea con el QR del PC. Aquí no hay bloqueo de «https → http», así
+  // que el iPhone también se conecta (versión 97). Se conecta sola con el código que va en el enlace
+  // (#c=123456); sin él, se pide en Ajustes con la dirección ya puesta
+  const desdeElPC = !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
+    && location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(location.hostname);
+  if (desdeElPC) {
+    const m = /[#&]c=(\d{6})(?:&|$)/.exec(location.hash);
+    // (el enlace con el código se deja en la barra: si se añade a la pantalla de inicio, entra conectada)
+    if (m) guardar('quimica.pc', { direccion: location.host, codigo: m[1] });
+  }
   // La app abierta como página web en internet (GitHub Pages: el iPhone, o un Android sin la APK).
   // Ahí no se puede hablar con Química PC (el PC va por http y la página por https: Safari no deja)
   const enLaWeb = !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
@@ -4313,6 +4324,27 @@
         h('p', {}, 'Código: ', h('b', { class: 'codigo-pc', text: r.codigo })),
         h('p', { class: 'nota', text: `O por cable USB: conecta el cable y, en el móvil, «🔌 Por cable USB». Tus datos y fotos se guardan en ${r.carpeta}.` }),
         h('p', { class: 'nota', text: '🔒 Por la wifi, conéctalo solo en una red de confianza (la de casa): lo que se pasa no va cifrado. En una wifi pública o de la universidad, mejor el cable.' }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
+      // El QR para el iPhone (y cualquier móvil): abre la app desde el PC y se conecta con el código.
+      // Se dibuja en el momento (la librería se carga la primera vez); si no hay red, no sale
+      const caja = h('div', { class: 'qr-pc' });
+      const dibujarQR = () => pedirPC('', '', '/api/hola').then((r) => r.json()).then(async (r) => {
+        const dir = (r.direcciones || [])[0];
+        if (!dir || !r.codigo) return;
+        const enlace = `http://${dir}/#c=${r.codigo}`;
+        if (!window.qrcode) {
+          await new Promise((ok, mal) => { const s = h('script', { src: 'vendor/qrcode.js' }); s.onload = ok; s.onerror = mal; document.head.append(s); });
+        }
+        const q = window.qrcode(0, 'M');
+        q.addData(enlace);
+        q.make();
+        const svg = new DOMParser().parseFromString(q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }), 'image/svg+xml').documentElement;
+        poner(caja,
+          h('p', {}, h('b', { text: '📷 Para el iPhone o cualquier móvil' })),
+          h('p', { class: 'nota', text: 'Con el móvil en la misma wifi que este PC, abre la cámara y apunta al código: toca el aviso que sale y la app se abre ya conectada. Después, «Compartir → Añadir a pantalla de inicio» para tenerla como una app.' }),
+          h('div', { class: 'qr-dibujo', role: 'img', 'aria-label': `Código QR con el enlace ${dir}` }, svg),
+          h('p', { class: 'nota', text: `O escribe en el navegador del móvil: http://${dir}  y el código ${r.codigo}.` }));
+      }).catch(() => {});
+      dibujarQR();
       // Un código nuevo, por si alguien ha visto el de ahora (versión 96)
       const cambiarCodigo = h('button', { class: 'boton discreto', text: '🔑 Cambiar el código', onclick: async () => {
         if (!await preguntar({ texto: '¿Cambiar el código?', detalle: 'Hazlo si alguien ha visto el de ahora. Los móviles conectados por la wifi dejarán de sincronizar hasta que les pongas el nuevo (Desconectar del PC y volver a conectar).', si: 'Cambiar el código', no: 'Cancelar' })) return;
@@ -4321,9 +4353,10 @@
           const b = info.querySelector('.codigo-pc');
           if (b) b.textContent = r.codigo;
           avisar(`Código nuevo: ${r.codigo}`);
+          dibujarQR();
         } catch { avisar('No se ha podido cambiar el código'); }
       } });
-      return [info, estado, ahora, cambiarCodigo];
+      return [info, caja, estado, ahora, cambiarCodigo];
     }
     const pc = leer('quimica.pc', null);
     if (pc && pc.direccion) {
@@ -4338,7 +4371,8 @@
           pintar();
         } })];
     }
-    const direccion = h('input', { class: 'campo', autocomplete: 'off', inputmode: 'url', placeholder: 'Dirección: 192.168.1.35:8765' });
+    // (abierta desde la dirección del PC: la dirección ya es esta; solo falta el código)
+    const direccion = h('input', { class: 'campo', autocomplete: 'off', inputmode: 'url', placeholder: 'Dirección: 192.168.1.35:8765', value: desdeElPC ? location.host : '' });
     const codigo = h('input', { class: 'campo', autocomplete: 'off', inputmode: 'numeric', placeholder: 'Código: 6 números' });
     const conectar = async (boton, d, c) => {
       boton.disabled = true;
@@ -4357,7 +4391,8 @@
     const porCable = h('button', { class: 'boton secundario', text: '🔌 Por cable USB', onclick: () => conectar(porCable, 'localhost:8765', '') });
     return [
       h('p', { class: 'nota', text: 'Con el programa Química PC abierto en tu ordenador, tendrás aquí y allí las mismas recetas, el cuaderno y las fotos, y podrás escribir en cualquiera de los dos. La dirección y el código salen en la ventana de Química PC.' }),
-      direccion, codigo, porWifi, porCable,
+      desdeElPC && h('p', { class: 'nota', text: '📷 Más fácil: en la app del PC (Ajustes) hay un código QR. Escanéalo con la cámara de este móvil y se conecta solo. Si no, escribe el código que sale en el PC:' }),
+      direccion, codigo, porWifi, !desdeElPC && porCable,
       h('p', { class: 'nota', text: 'Por la wifi: el móvil y el PC en la misma red (en algunas wifis de universidad no se ven entre sí; entonces, por cable). Por cable: con la depuración USB activada.' })];
   };
 
