@@ -1806,7 +1806,7 @@
   const abrirNueva = () => {
     const { cuerpo } = abrirPanel('Nueva receta');
     const texto = h('textarea', { class: 'campo', rows: 10, value: leer('quimica.borrador', ''),
-      placeholder: 'Pega o escribe aquí el procedimiento, como lo tengas: qué se hace, con qué reactivos y en qué cantidades.\n\nPor ejemplo: «Para 500 mL de tampón fosfato 0,1 M pH 7,4 se pesan 5,8 g de Na2HPO4 y…»',
+      placeholder: 'Pega o escribe aquí el procedimiento: qué se hace, con qué reactivos y en qué cantidades.\n\nCon las marcas:\n# Disolución de sal\n🧪 Preparar la disolución\nPesar 5,84 g de NaCl en 1 L de agua.',
       oninput: () => guardar('quimica.borrador', texto.value) });
     const boton = h('button', { class: 'boton', text: '✨ Convertir en receta con Gemini', onclick: async () => {
       if (!hayIA()) { abrirAjustes(); return; }
@@ -1825,8 +1825,34 @@
       boton.textContent = '✨ Convertir en receta con Gemini';
       avisar(r.error);
     } });
+    // Las marcas (versión 90, lo pidió el usuario: «que lo escriba simple e indicando si algo es una
+    // disolución, para que a la IA le sea más fácil»): tres botones que las escriben al empezar una
+    // línea nueva donde está el cursor, y un ejemplo
+    const ponerMarca = (marca) => {
+      const t = texto.value;
+      const a = texto.selectionStart == null ? t.length : texto.selectionStart;
+      const b = texto.selectionEnd == null ? a : texto.selectionEnd;
+      const antes = t.slice(0, a);
+      const salto = antes && !antes.endsWith('\n') ? '\n' : '';
+      texto.setRangeText(`${salto}${marca} `, a, b, 'end');
+      texto.dispatchEvent(new Event('input'));
+      texto.focus();
+    };
+    const botonMarca = (marca, rotulo, ayuda) => h('button', { class: 'chip', type: 'button', text: rotulo, title: ayuda,
+      onmousedown: (e) => e.preventDefault(), onclick: () => ponerMarca(marca) });
+    const EJEMPLO_MARCADO = '# Disolución de sal\n🧪 Preparar la disolución\nPesar 5,84 g de NaCl y disolverlos en 1 L de agua destilada.\nAgitar 5 minutos.\n\n# Lavado de las muestras\n🧫 Lavar y secar\nSumergir las muestras 10 minutos en la disolución.\nSecar 20 minutos a 60 °C. Repetir 3 veces.';
     poner(cuerpo,
       h('p', { class: 'nota', text: 'Gemini ordena el texto en pasos, pone los cronómetros y elige las fórmulas. Las cuentas las hace la app.' }),
+      h('p', { class: 'nota', text: 'Le sale mejor si marcas las partes: toca un botón y escribe a continuación su nombre. Lo que escribas debajo de cada marca son sus pasos. Si lo pegas sin marcar, también funciona.' }),
+      h('div', { class: 'chips marcas-receta' },
+        botonMarca('#', '＋ Fase', 'Empieza una fase nueva'),
+        botonMarca('🧪', '＋ 🧪 Disolución', 'Aquí se prepara una disolución'),
+        botonMarca('🧫', '＋ 🧫 Muestras', 'Aquí las muestras pasan por algo: lavar, secar, sumergir…'),
+        h('button', { class: 'chip', type: 'button', text: '👀 Ver un ejemplo', onclick: async () => {
+          if (texto.value.trim() && !await preguntar({ texto: '¿Poner el ejemplo?', detalle: 'Cambia lo que tienes escrito por un ejemplo.', si: 'Poner el ejemplo', no: 'No' })) return;
+          texto.value = EJEMPLO_MARCADO;
+          texto.dispatchEvent(new Event('input'));
+        } })),
       texto,
       boton,
       !hayIA() && h('p', { class: 'nota', text: 'Para usar Gemini hace falta una clave gratuita: al pulsar el botón se abren los Ajustes para ponerla.' }),

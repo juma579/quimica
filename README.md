@@ -1,5 +1,4 @@
 # 🧪 Química
-El código está hecho con claude code, no soy programador pero quería una app que se adecuase a mis necesidades.
 
 App para el laboratorio: **recetas** con pasos, cronómetros y cuentas automáticas (molaridad, diluciones, ácidos comerciales…), y un **cuaderno** para llevar el registro de tus muestras, disoluciones y fotos.
 

@@ -23,7 +23,8 @@
   const MODELOS = ['gemini-3.8-flash', 'gemini-3.8-flash'];
   const VUELTAS = 3;
   const ESPERA_SATURADO_MS = 6000;
-  const TIEMPO_MAXIMO = 90 * 1000;
+  // (la receta larga del usuario tardó 88 s con Gemini cargado: con 90 s por poco no llega)
+  const TIEMPO_MAXIMO = 150 * 1000;
   const MAX_TEXTO = 12000;
 
   // Los nombres de todos los huecos de las fórmulas fijas (c, v, pm, pureza, partes…).
@@ -80,6 +81,9 @@
           properties: {
             titulo: { type: 'STRING', nullable: true }, texto: { type: 'STRING' }, minutos: { type: 'NUMBER', nullable: true },
             ciclos: { type: 'INTEGER', nullable: true },
+            // Dónde empieza una subfase dentro de la fase y de qué es: preparar una disolución o
+            // unas muestras que pasan por algo (versión 89)
+            subfase: { type: 'STRING', nullable: true }, parte: { type: 'STRING', enum: ['disolucion', 'muestras'], nullable: true },
           },
           required: ['texto'],
         },
@@ -92,60 +96,47 @@
     + 'y los dejas como una receta clara, paso a paso, para una app de móvil. Eres riguroso con las unidades y las cuentas, '
     + 'y nunca inventas cantidades ni cambias el procedimiento.';
 
+  // Versión corta de las instrucciones (versión 88): la mitad de largas que las de antes, con lo mismo
+  // (una petición más ligera falla menos cuando Gemini está saturado)
   const REGLAS = `
-La app enseña la receta así: unos DATOS que el usuario puede cambiar, unas CANTIDADES que la app calcula a partir de los datos con una fórmula, y los PASOS, donde cada cantidad sale ya calculada. Si el usuario cambia un dato (el volumen final, la molaridad, un peso molecular…), todas las cantidades de los pasos cambian solas. Las fórmulas de siempre ya están hechas y probadas dentro de la app: tú solo dices cuál es la de cada cantidad y qué dato va en cada hueco; las cuentas y los cambios de unidades los hace la app.
+La app tiene DATOS (números que el usuario cambia), CANTIDADES (las calcula la app con sus fórmulas a partir de los datos) y PASOS (cada cantidad sale calculada dentro del texto). Tú eliges la fórmula de cada cantidad y qué dato va en cada hueco; las cuentas y los cambios de unidades los hace la app.
 
-Devuelve un objeto JSON con:
-- nombre: corto. resumen: una frase que diga qué se prepara o qué se hace.
-- seguridad: precauciones (lo que diga el texto y lo evidente para esos reactivos: guantes, gafas, vitrina, "añadir el ácido sobre el agua"…), en pocas frases; null si no hace falta. Si se calienta un disolvente inflamable (etanol, acetona…) o se mete en un horno algo empapado en él, avisa aquí: calentar solo sobre placa sin llama, con ventilación y por debajo de su punto de ebullición, y dejar evaporar el disolvente en vitrina antes del horno.
-- datos: los números de los que depende la receta y que el usuario querrá cambiar: volumen final, concentración deseada, concentración de las disoluciones madre, masa del reactivo de partida, equivalentes, pureza o riqueza, densidad y los pesos moleculares. Cada uno:
-  - id: nombre corto para las fórmulas, solo letras minúsculas sin tilde, números y "_", empezando por letra: "v_final", "c_nacl", "pm_nacl", "eq_base", "d_hcl".
-  - nombre: como lo leería una persona ("Volumen final", "Concentración de NaCl").
-  - origen: de dónde sale el valor. "texto": el número está escrito en el texto. "deducido": se calcula con números del texto (una concentración a partir de una masa y un volumen). "formula": es un peso molecular con su fórmula química. "falta": hace falta pero el texto no lo da ni se puede deducir de él (lo más habitual: el volumen que se quiere preparar de cada disolución cuando el texto solo da concentraciones; también una pureza o la concentración de un stock).
-  - valor: el número, si origen es "texto" o "deducido". Si origen es "falta" o "formula", null: el usuario lo escribirá en la app. NUNCA inventes un valor "razonable" (ni 100 mL, ni 1 L): un número inventado parecería sacado del texto.
-  - unidad: g, mg, mL, L, µL, mol, mmol, M, mM, g/mol, %, g/mL, eq…
-  - formula: SOLO en los pesos moleculares (unidad "g/mol"): la fórmula química bien escrita, con mayúsculas y minúsculas ("NaCl", "CuSO4·5H2O", "Ca(OH)2", "C9H8O4"). La app calcula el peso molecular con ella: en ese caso pon valor null. En los demás datos, formula null.
-- calculos: cada cantidad que hay que medir (pesar, pipetear, enrasar) y que depende de los datos. Cada uno:
-  - id y nombre, como en los datos ("m_nacl", "NaCl a pesar").
-  - unidad: la del resultado (g para una masa, mL para un volumen, M para una molaridad, mol o mmol para moles). La app ya cambia sola de g a mg o de mL a µL: no hagas cálculos duplicados para eso.
-  - tipo: cuál de las fórmulas de la app es.
-  - huecos: qué va en cada hueco de esa fórmula, como una lista de parejas { "hueco": nombre del hueco, "dato": UN SOLO id de un dato o de otro cálculo }. Pon una pareja por cada hueco de la fórmula: TODOS los obligatorios, y los opcionales si existe ese dato (si la receta tiene la pureza de ese reactivo, pon su hueco pureza). En "dato" va un único id, tal cual, sin espacios ni nada más; NUNCA números: si hace falta un número (6 M, 2 equivalentes, el 98 % de pureza), créalo como dato. No conviertas unidades: la app sabe que un dato va en mL o en mM. Los tipos y sus huecos:
-    - "masa_molar": masa de un sólido para una disolución de molaridad dada. Huecos: c (la concentración, en M o mM), v (el volumen de disolución), pm (el peso molecular), pureza (en %, opcional). Ejemplo: [{"hueco":"c","dato":"c_nacl"},{"hueco":"v","dato":"v_final"},{"hueco":"pm","dato":"pm_nacl"},{"hueco":"pureza","dato":"pureza_nacl"}].
-    - "masa_gl": masa de un sólido para una concentración en g/L, mg/mL o % peso/volumen. Huecos: c, v, pureza (opcional).
-    - "dilucion": volumen que hay que medir de una disolución más concentrada. Huecos: c (la concentración que se quiere), v (el volumen que se quiere), c_stock (la concentración de la disolución de partida; puede ser un dato o un cálculo de tipo "conc_comercial"). Las dos concentraciones, en el mismo tipo de unidad.
-    - "parte": lo que le toca a una parte de una mezcla en proporción (5 : 1 : 4). Huecos: total (el volumen total de la mezcla), parte (el dato con las partes de esta), y una pareja "partes" por CADA parte de la mezcla, incluida esta. Ejemplo para la primera de tres: [{"hueco":"total","dato":"v_mezcla"},{"hueco":"parte","dato":"partes_a"},{"hueco":"partes","dato":"partes_a"},{"hueco":"partes","dato":"partes_b"},{"hueco":"partes","dato":"partes_extra"}].
-    - "conc_comercial": molaridad de un ácido o una base que se compra concentrado. Huecos: densidad (g/mL), riqueza (% en peso), pm. Sale en M.
-    - "moles_masa": moles que hay en una masa. Huecos: masa, pm, pureza (opcional). Sale en mol o mmol.
-    - "moles_disolucion": moles que hay en un volumen de disolución. Huecos: c, v.
-    - "masa_moles": masa de un reactivo o de un producto a partir de unos moles. Huecos: moles (un cálculo de moles), eq (los equivalentes respecto a esos moles; opcional), pm, pureza (opcional).
-    - "volumen_masa": volumen de un líquido puro a partir de su masa. Huecos: masa, densidad.
-    - "volumen_moles": volumen de una disolución que lleva unos moles. Huecos: moles, eq (opcional), c.
-    - "libre": SOLO si ninguna de las anteriores sirve. Entonces huecos null, y escribe tú la cuenta en expr, con los id de los datos y de otros cálculos, números con punto decimal, + - * / ^ y paréntesis (también sqrt(), log() decimal, ln(), exp(), min(), max()), metiendo en ella los cambios de unidades. La app la marcará para que el usuario la revise.
-  - expr: null salvo con tipo "libre".
-  - original: SOLO si el texto dice literalmente esa cantidad ("se pesan 5,84 g"): ese número, en esa misma unidad (sirve para comprobar tu fórmula: con los datos del texto, la fórmula tiene que dar ese número). Si el texto no la dice, null: no pongas aquí un número calculado por ti.
-- pasos: frases cortas, siempre en imperativo de tú ("Pesa…", "Añade…", "Seca…"; nunca "Pesar", "Secado" ni "Se pesa"), una acción por paso y en el orden del texto. No te saltes nada de lo que diga el texto (temperaturas, orden de adición, material, lo que hay que observar, condiciones como "solo para las muestras X", cuántas veces se repite algo).
-  - titulo: si el texto viene dividido en fases, etapas o apartados ("Fase 1: Tinta de grafeno", "Lavado ácido (solo muestras GNP)"), el primer paso de cada una lleva en titulo el nombre de la fase tal como lo dice el texto, con sus aclaraciones. En los demás pasos, null.
-  - ciclos: si unos pasos se repiten varias veces (un ciclo: "sumergir, secar y repetir 5 veces"), el PRIMER paso del ciclo lleva en ciclos cuántos ciclos son en total (5; "repetir 5 veces" son 5 en total, no 5 además del primero, salvo que el texto diga otra cosa). La app pone ahí un contador que sube cada vez que se pone el cronómetro de ese paso. En los demás pasos, null. Dilo también en el texto de ese primer paso ("Sumerge la fibra en la tinta durante 10 min (ciclo de inmersión y secado: 5 ciclos en total)") y deja al final del ciclo el paso de repetir ("Repite la inmersión y el secado 4 veces más: 5 ciclos en total").
-  - Cada cantidad que sea un dato o un cálculo se escribe con su id entre llaves, SIN el número ni la unidad: "Pesa {m_nacl} de NaCl y disuélvelo en unos {v_agua} de agua". La app pone el número y la unidad: no escribas la unidad detrás de las llaves (mal: "HNO3 {c_hno3} M"; bien: "HNO3 {c_hno3}").
-  - Lo que no cambia con la escala (temperaturas, rpm, pH, tiempos) se escribe tal cual en el texto del paso, SIEMPRE: cada paso se tiene que entender solo ("Mantén el reactor sellado a 100 °C durante 8 h", "Sonica 3 h").
-  - minutos: solo si en ese paso hay que esperar un tiempo concreto que dice el texto (agitar, calentar, reflujo, reposo, enfriar, centrifugar, incubar): la app pone un cronómetro. El tiempo va en minutos (3 h son 180) y además escrito en el texto del paso. Puede llevar decimales (0.5 son 30 segundos). Si es un intervalo, el valor más bajo. Si no hay espera, o el texto no da un tiempo concreto ("toda la noche", "hasta que se disuelva"), null: no inventes una duración.
+- nombre corto; resumen: una frase de qué se prepara o qué se hace.
+- seguridad: pocas frases (lo del texto y lo evidente: guantes, gafas, vitrina, "el ácido sobre el agua"); null si no hace falta. Si se calienta un disolvente inflamable o va al horno algo empapado en él: placa sin llama, ventilación, por debajo de su ebullición, y evaporarlo en vitrina antes del horno.
+- datos: lo que un químico querría cambiar: volumen a preparar, concentraciones, masa de partida, equivalentes, pureza, densidad y pesos moleculares.
+  - id: minúsculas sin tilde, números y "_", empezando por letra ("v_final", "c_nacl", "pm_nacl"). nombre: legible ("Concentración de NaCl").
+  - origen y valor: "texto" (el número está en el texto) o "deducido" (sale de números del texto), con su valor; "formula" (peso molecular: pon formula, la química bien escrita, "CuSO4·5H2O", con el hidrato exacto que diga el texto; si el texto NO dice hidrato, la sal sin agua, "Cu(NO3)2": nunca te inventes uno) o "falta" (el texto no lo da: casi siempre el volumen a preparar), con valor null. NUNCA inventes un valor (ni 100 mL ni 1 L).
+  - formula: solo en los pesos moleculares (unidad "g/mol"); en los demás, null.
+  - Pureza: cada sólido que se pesa lleva su dato de pureza en % (100 y "deducido" si el texto no la da) en el hueco pureza.
+- calculos: cada cantidad que hay que medir. unidad del resultado: g, mL, M, mol o mmol (la app ya pasa a mg o µL).
+  - tipo y huecos: lista de parejas {"hueco","dato"}, con UN id de un dato o de otro cálculo por pareja, nunca números (si hace falta un número, créalo como dato). Pon todos los huecos obligatorios y los opcionales (?) si existe ese dato. Tipos:
+    - masa_molar: masa de sólido para una molaridad. c, v, pm, pureza?
+    - masa_gl: masa de sólido para g/L, mg/mL o % p/v. c, v, pureza?
+    - dilucion: volumen a medir de una disolución más concentrada. c, v, c_stock (un dato o un cálculo conc_comercial).
+    - parte: lo de una parte de una mezcla en proporción. total, parte (sus partes) y una pareja "partes" por CADA parte, incluida esta: [{"hueco":"total","dato":"v_mezcla"},{"hueco":"parte","dato":"partes_a"},{"hueco":"partes","dato":"partes_a"},{"hueco":"partes","dato":"partes_b"}].
+    - conc_comercial: molaridad de un ácido o base comercial. densidad, riqueza, pm.
+    - moles_masa: moles en una masa. masa, pm, pureza?
+    - moles_disolucion: moles en un volumen de disolución. c, v.
+    - masa_moles: masa a partir de unos moles. moles, eq?, pm, pureza?
+    - volumen_masa: volumen de un líquido puro. masa, densidad.
+    - volumen_moles: volumen de disolución con unos moles. moles, eq?, c.
+    - libre: solo si nada encaja. huecos null y escribe la cuenta en expr (ids, números con punto, + - * / ^ y paréntesis, con los cambios de unidades).
+  - expr: null salvo en libre. original: solo si el texto dice literalmente esa cantidad ("se pesan 5,84 g"), en esa unidad; si no, null.
+- pasos: imperativo de tú ("Pesa", "Añade"; nunca "Pesar" ni "Se pesa"), una acción por paso, en orden, sin saltarte nada (temperaturas, orden de adición, material, lo que hay que observar, "solo para las muestras X").
+  - Las cantidades, con su id entre llaves y SIN unidad detrás: "Pesa {m_nacl} de NaCl y disuélvelo hasta {v_final}". Cada id entre llaves tiene que existir.
+  - Lo que no cambia con la escala (temperaturas, tiempos, rpm, pH) va escrito en el paso: cada paso se entiende solo.
+  - titulo: en el primer paso de cada fase o apartado del texto, su nombre tal cual ("Lavado ácido (solo muestras GNP)"); si no, null.
+  - subfase y parte: cada fase se divide en partes de dos tipos. En el PRIMER paso de cada parte, subfase = su nombre corto ("Preparar la tinta", "Lavado de la fibra") y parte = "disolucion" si en esos pasos se prepara una disolución (pesar, disolver, mezclar, enrasar, sonicar, ajustar el pH, enfriarla) o "muestras" si las muestras pasan por algo (lavar, sumergir, secar, calentar, meter al horno o al reactor). Una fase tiene una o varias partes; si solo hay muestras, una sola. En los demás pasos, null en los dos.
+  - minutos: solo si el texto da una espera concreta (3 h = 180; un intervalo, el más bajo); también escrita en el texto. "Toda la noche" o "hasta que se disuelva": null.
+  - ciclos: en CADA paso con tiempo (minutos) de unos pasos que se repiten, cuántas veces en total ("repetir 5 veces" = 5). Así la inmersión y el secado de un ciclo llevan los dos ciclos 5: el usuario trabaja con varias muestras a la vez, unas en cada paso, y cada paso lleva su propia cuenta. Dilo en el texto del primer paso ("…: 5 ciclos en total") y deja al final el de repetir ("Repite… 4 veces más: 5 ciclos en total"), sin ciclos ni minutos.
 
-Cómo elegir los datos y las fórmulas:
-- Piensa qué querría cambiar un químico: casi siempre el volumen final o la escala, la concentración, y los pesos moleculares, la pureza y la densidad de los reactivos.
-- Aunque el texto solo dé cantidades fijas ("disuelve 5,84 g de NaCl en 1 L"), saca de ellas los datos con sentido químico (concentración 0.1 M, volumen 1000 mL, peso molecular) y calcula la cantidad con ellos.
-- Pureza: cada reactivo que se pesa para una disolución de concentración dada lleva su dato de pureza en % ("pureza_nacl"; si el texto no la da, valor 100 y origen "deducido"), y va en el hueco pureza de su cálculo.
-- Ácido o base comercial diluido a una concentración ("HNO3 6 M"): datos de la concentración que se quiere, el volumen a preparar, la densidad (g/mL) y la riqueza (% en peso) del producto comercial (origen "falta" si el texto no los da) y su peso molecular; un cálculo "conc_comercial" y otro "dilucion" con ese como c_stock; y un paso aparte para prepararlo: "En vitrina, añade lentamente {v_acido} de HNO3 comercial sobre agua destilada (nunca al revés) y completa con agua hasta {v_bano}".
-- Reacción o síntesis: toma un reactivo de referencia (su masa es un dato), calcula sus moles ("moles_masa") y da los demás por equivalentes ("masa_moles", con un dato de equivalentes que sale de las cantidades del texto; si es un líquido, después "volumen_masa" con su densidad). Si viene a cuento, añade el rendimiento teórico ("masa_moles" con el peso molecular del producto).
-- Mezcla en proporción de volúmenes (por ejemplo 5 : 1 : 4, disolución A : disolución B : disolvente). OBLIGATORIO hacerlo así, y NO con un dato de volumen suelto para cada parte:
-  - datos: UN solo volumen, el total de la mezcla ("v_mezcla", origen "falta" si el texto no lo da), y un dato por cada parte de la proporción ("partes_a" 5, "partes_b" 1, "partes_extra" 4, unidad "partes", origen "texto").
-  - calculos: el volumen de cada parte, de tipo "parte". La masa de lo que se disuelve en cada parte se calcula con el volumen de esa parte (ese cálculo va en el hueco v).
-  - pasos: cada uno dice su volumen: "Disuelve {m_a} de A en {v_a} de etanol", "Mezcla las dos disoluciones y añade {v_extra} de etanol".
-- Si hay varias disoluciones independientes, cada una tiene su propio dato de volumen a preparar.
-- En el paso donde se prepara cada disolución se dice cuánto se prepara: "Disuelve {m_nacl} de NaCl en agua destilada hasta {v_final}". Todo dato de volumen o de masa tiene que usarse en algún cálculo o salir en algún paso: no dejes datos sueltos.
-- Cada id que escribas entre llaves en un paso tiene que ser exactamente uno de los id de datos o de calculos: repásalos uno a uno antes de contestar.
-- Si una cantidad no encaja en ningún tipo pero debe crecer con la receta, crea el dato "escala" (valor 1, unidad "×") y un cálculo "libre" con expr "cantidad_del_texto * escala".
-- No inventes cantidades, reactivos ni pasos que no estén en el texto (salvo el de preparar un ácido diluido). Si el texto dice el hidrato de una sal (monohidratado, trihidratado…), la fórmula química lleva exactamente ese hidrato. No uses en huecos ni en expr ningún id que no hayas definido.
-- Todo en español correcto, con sus tildes.`;
+Cómo montarlo:
+- Saca datos con sentido químico aunque el texto dé cantidades fijas ("5,84 g de NaCl en 1 L" → 0.1 M, 1000 mL y su peso molecular).
+- Cada disolución tiene su dato de volumen a preparar, y su paso dice cuánto se prepara. Ningún dato puede quedar sin usar.
+- Ácido o base comercial diluido ("HNO3 6 M"): datos de concentración, volumen, densidad y riqueza del comercial ("falta" si no los da) y pm; un cálculo conc_comercial, otro dilucion con él como c_stock, y un paso: "En vitrina, añade lentamente {v_acido} de HNO3 comercial sobre agua destilada (nunca al revés) y completa hasta {v_bano}".
+- Mezcla en proporción (5 : 1 : 4): UN dato con el volumen total y un dato por parte (unidad "partes"); el volumen de cada parte, con parte; lo que se disuelve en una parte, con ese volumen en el hueco v.
+- Síntesis: un reactivo de referencia (su masa es un dato), sus moles con moles_masa y los demás por equivalentes con masa_moles (un líquido, después volumen_masa).
+- No inventes cantidades, reactivos ni pasos (salvo el de preparar el ácido diluido). Todo en español correcto, con tildes.`;
 
   // De las parejas que da Gemini ([{ hueco, dato }]) a los args de la receta ({ c: 'c_nacl', partes: [...] }), y al revés.
   // Si Gemini manda también (o solo) el formato viejo, args, se respeta
@@ -164,7 +155,67 @@ Cómo elegir los datos y las fórmulas:
   };
   const aParejas = (args) => Object.entries(args || {}).flatMap(([hueco, v]) => (Array.isArray(v) ? v : [v]).map((dato) => ({ hueco, dato })));
 
-  const pedirConvertir = (texto) => `Convierte este procedimiento de laboratorio en una receta para la app.\n${REGLAS}\n\nEl procedimiento, tal como lo ha escrito el usuario:\n"""\n${texto}\n"""`;
+  // El texto, sin lo que sobra para la IA (versión 88): espacios y saltos de línea repetidos, y los
+  // números de las citas ([12], "ref. 3"). Lo que se guarda como «texto original» es lo que escribió
+  // el usuario, tal cual; esto solo es lo que se manda (menos peso = menos fallos por saturación)
+  const limpiarTexto = (t) => String(t || '')
+    .replace(/\r/g, '')
+    .replace(/[\t ]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .replace(/ +\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s*\[\d+(?:[-–,]\d+)*\]/g, '')
+    .trim();
+
+  // ─── Las marcas que puede poner el usuario al escribir (versión 90) ───
+  // «# Título» (o «Fase: Título») empieza una fase; «🧪 Nombre» (o «Disolución: Nombre»), una parte en
+  // la que se prepara una disolución; «🧫 Nombre» (o «Muestras: Nombre»), una parte en la que las
+  // muestras pasan por algo. Lo que sigue a una marca son los pasos de ese bloque. Con ellas, la IA
+  // ya no tiene que adivinar la estructura (la persona la sabe), y es lo que respeta
+  // Una marca puede ir sola («🧪» y debajo los pasos): sin nombre, la IA le pone uno corto. Y si
+  // detrás de la marca va una frase larga y no un nombre (pasó: «🧫 The reactor was placed in an oven
+  // at 100ºC…»), esa frase es un paso: la marca queda sin nombre y la línea se manda tal cual
+  // (el usuario probó así de verdad y salían nombres de 100 letras cortados)
+  const MARCAS = [
+    [/^(?:#+|fase\s*:)\s*(.*)$/i, 'fase'],
+    [/^(?:🧪|disoluci[oó]n\s*:)\s*(.*)$/i, 'disolucion'],
+    [/^(?:🧫|muestras\s*:)\s*(.*)$/i, 'muestras'],
+  ];
+  const esNombre = (t) => t.length <= 50 && !/[.;]\s/.test(t) && !/[.;]$/.test(t) && t.split(/\s+/).length <= 8;
+  const marcasDe = (texto) => {
+    const marcas = [];
+    for (const linea of String(texto || '').split('\n')) {
+      const t = linea.trim();
+      for (const [re, tipo] of MARCAS) {
+        const m = re.exec(t);
+        if (m) {
+          const resto = m[1].trim();
+          marcas.push({ tipo, nombre: esNombre(resto) ? resto : '' });
+          break;
+        }
+      }
+    }
+    return marcas;
+  };
+  const sinTildes = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+  // Lo que la IA tenía que haber puesto y no está en la receta (para avisar; no se arregla solo)
+  const marcasSinCumplir = (receta, marcas) => {
+    const fases = new Set(receta.pasos.map((p) => p.titulo).filter(Boolean).map(sinTildes));
+    const subs = new Map(receta.pasos.filter((p) => p.subfase).map((p) => [sinTildes(p.subfase), p.parte]));
+    // (las marcas sin nombre no se pueden comprobar por el nombre)
+    return marcas.filter((m) => m.nombre && (m.tipo === 'fase' ? !fases.has(sinTildes(m.nombre)) : subs.get(sinTildes(m.nombre)) !== m.tipo));
+  };
+  const avisoDeMarcas = (marcas) => {
+    if (!marcas.length) return '';
+    const nombre = { fase: 'una fase', disolucion: 'una parte de disolución (🧪)', muestras: 'una parte de muestras (🧫)' };
+    return `\n\nEl usuario ya ha marcado la estructura. RESPÉTALA exactamente: no cambies sus nombres, su orden ni su tipo, y no añadas otras fases ni partes. Las marcas, en orden:\n${
+      marcas.map((m) => `- ${nombre[m.tipo]}: ${m.nombre ? `«${m.nombre}»` : '(sin nombre: ponle tú uno corto, de 2 a 5 palabras)'}`).join('\n')}\n`
+      + 'Una marca de fase pone ese nombre en titulo del primer paso de la fase; una de disolución o de muestras, ese nombre en subfase y su tipo en parte, en el primer paso de ese bloque. '
+      + 'Si en la línea de una marca hay una frase larga en vez de un nombre, esa frase es un paso de ese bloque. '
+      + 'Las líneas que van detrás de una marca son los pasos de ese bloque. Una fase sin marcas 🧪 o 🧫 debajo no lleva subfases. Quita las marcas del texto de los pasos.';
+  };
+
+  const pedirConvertir = (texto) => `Convierte este procedimiento de laboratorio en una receta para la app.\n${REGLAS}${avisoDeMarcas(marcasDe(texto))}\n\nEl procedimiento, tal como lo ha escrito el usuario:\n"""\n${limpiarTexto(texto)}\n"""`;
 
   const pedirCambio = (receta, peticion) => {
     const actual = {
@@ -179,7 +230,8 @@ Cómo elegir los datos y las fórmulas:
       calculos: receta.calculos.map((c) => (Quimica.esFija(c)
         ? { id: c.id, nombre: c.nombre, unidad: c.unidad, tipo: c.tipo, huecos: aParejas(c.args), expr: null, original: null }
         : { id: c.id, nombre: c.nombre, unidad: c.unidad, tipo: 'libre', huecos: null, expr: c.expr, original: null })),
-      pasos: receta.pasos.map((p) => ({ titulo: p.titulo || null, texto: p.texto, minutos: p.minutos || null, ciclos: p.ciclos || null })),
+      pasos: receta.pasos.map((p) => ({ titulo: p.titulo || null, texto: p.texto, minutos: p.minutos || null, ciclos: p.ciclos || null,
+        subfase: p.subfase || null, parte: p.subfase ? p.parte || 'muestras' : null })),
     };
     return `Esta es una receta de la app, en JSON:\n${JSON.stringify(actual)}\n\nEl usuario pide este cambio:\n"""\n${peticion}\n"""\n\n`
       + 'Devuelve la receta entera con ese cambio hecho. Conserva tal cual todo lo que el cambio no toque (los id, los valores de los datos, los pasos). '
@@ -197,11 +249,18 @@ Cómo elegir los datos y las fórmulas:
   const SEGURIDAD = 'seguridad';
   const FINES_DE_SEGURIDAD = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION'];
 
+  // Pensar menos antes de escribir (versión 88): la primera respuesta real gastó 1.284 «palabras» de
+  // pensar y tardó 49 s; para esta tarea tan mecánica no hacen falta. Si Gemini rechaza el ajuste
+  // (400 que nombra «thinking»), se quita, se repite sin él y se recuerda para las siguientes
+  let limitarPensar = true;
+  const PRESUPUESTO_PENSAR = 512;
+
   const llamar = async (modelo, texto, clave, pedir) => {
     const cuerpo = {
       systemInstruction: { parts: [{ text: SISTEMA }] },
       contents: [{ role: 'user', parts: [{ text: texto }] }],
-      generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: ESQUEMA },
+      generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: ESQUEMA,
+        ...(limitarPensar ? { thinkingConfig: { thinkingBudget: PRESUPUESTO_PENSAR } } : {}) },
     };
     const control = new AbortController();
     const temporizador = setTimeout(() => control.abort(), TIEMPO_MAXIMO);
@@ -215,6 +274,12 @@ Cómo elegir los datos y las fórmulas:
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         const mensaje = String((j.error && j.error.message) || `HTTP ${r.status}`);
+        // Ese modelo no admite limitar el pensar: se repite sin el ajuste (solo esta vez y las siguientes)
+        if (r.status === 400 && limitarPensar && /think/i.test(mensaje)) {
+          limitarPensar = false;
+          clearTimeout(temporizador);
+          return llamar(modelo, texto, clave, pedir);
+        }
         // Gemini contesta 400 tanto si la clave no vale como si la petición está mal: se distinguen por el texto
         const estado = r.status === 400 && /api.?key/i.test(mensaje) ? 401 : r.status;
         throw new ErrorIA(mensaje.split(clave).join('[clave]').slice(0, 200), estado);
@@ -256,7 +321,7 @@ Cómo elegir los datos y las fórmulas:
   };
 
   // Pide con el modelo principal y, si falla, con el de reserva. Devuelve { receta, modelo } o { error }
-  const generar = async (texto, clave, opciones, extra, sinOriginales) => {
+  const generar = async (texto, clave, opciones, extra, sinOriginales, marcas = []) => {
     const pedir = (opciones && opciones.fetch) || ((...a) => fetch(...a));
     const pausa = (opciones && opciones.pausa) || ((ms) => new Promise((r) => setTimeout(r, ms)));
     let ultimo = null;
@@ -284,6 +349,10 @@ Cómo elegir los datos y las fórmulas:
           // Al cambiar una receta, lo que decía el texto ya no sirve para comprobar (los datos pueden ser otros)
           if (sinOriginales) for (const c of v.receta.calculos) delete c.original;
           v.receta.avisos = Quimica.revisar(v.receta);
+          // Lo que el usuario marcó y la IA no ha respetado, para que lo arregle en el formulario
+          for (const m of marcasSinCumplir(v.receta, marcas)) {
+            v.receta.avisos.push(`Marcaste ${m.tipo === 'fase' ? 'la fase' : m.tipo === 'disolucion' ? 'la disolución 🧪' : 'las muestras 🧫'} «${m.nombre}» y la IA no la ha puesto: añádela en el formulario (✏️).`);
+          }
           // Las fórmulas que ha escrito la IA (las que no son de las fijas de la app) se avisan
           for (const c of v.receta.calculos) {
             if (!Quimica.esFija(c)) v.receta.avisos.push(`«${c.nombre}» lleva una fórmula escrita por la IA, no una de las fijas de la app: revísala (= ${c.expr}).`);
@@ -328,7 +397,7 @@ Cómo elegir los datos y las fórmulas:
     if (!k) return Promise.resolve({ error: 'Falta la clave de Gemini: ponla en ⚙️ Ajustes' });
     if (t.length < 20) return Promise.resolve({ error: 'Pega el texto del procedimiento (es muy corto)' });
     if (t.length > MAX_TEXTO) return Promise.resolve({ error: `El texto es demasiado largo (más de ${MAX_TEXTO} letras)` });
-    return unaALaVez(() => generar(pedirConvertir(t), k, opciones, { textoOriginal: t }));
+    return unaALaVez(() => generar(pedirConvertir(t), k, opciones, { textoOriginal: t }, false, marcasDe(t)));
   };
 
   // Una receta + lo que pide el usuario → la receta cambiada (con su id y su texto original)
@@ -340,7 +409,7 @@ Cómo elegir los datos y las fórmulas:
     return unaALaVez(() => generar(pedirCambio(receta, t.slice(0, 2000)), k, opciones, { id: receta.id, textoOriginal: receta.textoOriginal }, true));
   };
 
-  const Gemini = { convertir, cambiar, MODELOS };
+  const Gemini = { convertir, cambiar, marcasDe, MODELOS };
   if (typeof module !== 'undefined' && module.exports) module.exports = Gemini;
   else raiz.Gemini = Gemini;
 })(typeof window !== 'undefined' ? window : globalThis);
