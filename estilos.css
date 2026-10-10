@@ -663,3 +663,7 @@ small.aviso-sentido[hidden] { display: none; }
 .escaner { position: relative; border-radius: 14px; overflow: hidden; background: #000; }
 .escaner-video { display: block; width: 100%; max-height: 60dvh; object-fit: cover; }
 .escaner-estado { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px 12px; background: #000b; color: #fff; font-size: 15px; text-align: center; }
+
+/* Qué móviles han sincronizado con el PC (versión 99) */
+.moviles-pc { margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: var(--color-suave); color: var(--texto); font-size: 14.5px; }
+.moviles-pc.sin-moviles { background: var(--aviso-fondo); color: var(--aviso-texto); }

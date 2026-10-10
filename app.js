@@ -4358,8 +4358,11 @@
     const s = Math.round((Date.now() - ms) / 1000);
     return s < 60 ? 'ahora mismo' : s < 3600 ? `hace ${Math.round(s / 60)} min` : `el ${fechaCorta(ms)} a las ${horaDe(ms)}`;
   };
+  // (en el navegador del PC, «sincronizado» solo quiere decir que esta pantalla está al día con el
+  // programa Química PC, no que el móvil lo esté: el móvil se ve aparte, «📱» en Ajustes)
   const textoEstadoPC = () => (!estadoPC ? (sincronizando ? '🔄 Sincronizando…' : 'Aún no se ha sincronizado desde que abriste la app')
-    : estadoPC.ok ? `✅ Sincronizado ${haceCuanto(estadoPC.fecha)}${estadoPC.fotos ? ` (${estadoPC.fotos} ${estadoPC.fotos === 1 ? 'foto pasada' : 'fotos pasadas'})` : ''}`
+    : estadoPC.ok ? (enElPC && pcVisto ? `✅ Esta pantalla está al día con Química PC (${haceCuanto(estadoPC.fecha)})`
+      : `✅ Sincronizado ${haceCuanto(estadoPC.fecha)}${estadoPC.fotos ? ` (${estadoPC.fotos} ${estadoPC.fotos === 1 ? 'foto pasada' : 'fotos pasadas'})` : ''}`)
       : `⚠️ ${estadoPC.error} (${haceCuanto(estadoPC.fecha)})`);
 
   // La parte de Ajustes de la conexión con el PC. pintar: el de Ajustes, para volver a pintarlo
@@ -4375,11 +4378,27 @@
     if (enElPC && pcVisto) {
       // En el navegador del PC: lo que hay que escribir en el móvil
       const info = h('div', { class: 'caja datos-pc' }, h('p', { class: 'nota', text: 'Buscando…' }));
-      pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => poner(info,
+      // Qué móviles han sincronizado y cuándo (se vuelve a mirar cada 10 s mientras está abierto)
+      const moviles = h('p', { class: 'moviles-pc' });
+      const verMoviles = (aparatos) => {
+        const nuevos = (aparatos || []).length
+          ? aparatos.map((a) => `${a.nombre}: sincronizó ${haceCuanto(Date.now() - a.hace)}`).join(' · ')
+          : 'Ningún móvil ha sincronizado desde que abriste Química PC.';
+        moviles.textContent = `📱 ${nuevos}`;
+        moviles.classList.toggle('sin-moviles', !(aparatos || []).length);
+      };
+      const mirarMoviles = () => {
+        if (!moviles.isConnected) return;
+        pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => verMoviles(r.aparatos)).catch(() => {});
+        setTimeout(mirarMoviles, 10000);
+      };
+      setTimeout(mirarMoviles, 10000);
+      pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
         h('p', { text: 'Esta es la app en el PC. Para conectar el móvil, en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC, y escribe:' }),
         h('p', {}, 'Dirección: ', h('b', { text: (r.direcciones || []).join('  o  ') || '(este PC no está en ninguna red)' })),
         h('p', {}, 'Código: ', h('b', { class: 'codigo-pc', text: r.codigo })),
-        h('p', { class: 'nota', text: `O por cable USB: conecta el cable y, en el móvil, «🔌 Por cable USB». Tus datos y fotos se guardan en ${r.carpeta}.` }),
+        // (lo del cable solo si este PC tiene las herramientas de Android; la carpeta es la de quien lo abre)
+        h('p', { class: 'nota', text: `${r.cable ? 'O por cable USB (Android): conecta el cable y, en el móvil, «🔌 Por cable USB». ' : ''}Tus datos y fotos se guardan en ${r.carpeta}.` }),
         h('p', { class: 'nota', text: '🔒 Por la wifi, conéctalo solo en una red de confianza (la de casa): lo que se pasa no va cifrado. En una wifi pública o de la universidad, mejor el cable.' }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
       // El QR para el iPhone (y cualquier móvil): abre la app desde el PC y se conecta con el código.
       // Se dibuja en el momento (la librería se carga la primera vez); si no hay red, no sale
@@ -4413,7 +4432,7 @@
           dibujarQR();
         } catch { avisar('No se ha podido cambiar el código'); }
       } });
-      return [info, caja, estado, ahora, cambiarCodigo];
+      return [info, moviles, caja, estado, ahora, cambiarCodigo];
     }
     const pc = leer('quimica.pc', null);
     if (pc && pc.direccion) {
