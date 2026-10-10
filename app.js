@@ -4546,14 +4546,17 @@
         const solos = lista.filter((a) => !a.manual);
         const manuales = lista.filter((a) => a.manual);
         const activos = solos.filter((a) => a.hace < 45 * 1000); // la app sincroniza cada 15 s (con la app a la vista)
-        const bien = activos.length > 0 || manuales.length > 0;
+        const atrasados = manuales.filter((a) => a.pendiente);
+        const bien = !atrasados.length && (activos.length > 0 || manuales.length > 0);
         moviles.classList.toggle('sin-moviles', !bien);
         moviles.classList.toggle('con-moviles', bien);
         poner(moviles,
-          h('b', { text: activos.length ? `📱 ${activos.length === 1 ? 'Móvil conectado' : `${activos.length} móviles conectados`}`
-            : manuales.length ? '📱 Móvil que sincroniza a mano' : solos.length ? '📱 Móvil sin sincronizar ahora' : '📱 Ningún móvil conectado' }),
-          lista.map((a) => h('span', { class: 'movil-linea', text: `${[a.tipo, a.nombre].filter(Boolean).join(' ')} · ${a.manual ? 'desde la página web, a mano · ' : ''}última sincronización ${hace(a)}` })),
-          !activos.length && h('span', { class: 'movil-linea', text: manuales.length ? 'Desde la página web, los cambios se pasan cuando en el móvil se toca «🔄 Sincronizar con el PC» (con la misma wifi).'
+          h('b', { text: atrasados.length ? '📱 Faltan cambios por pasar al móvil'
+            : activos.length ? `📱 ${activos.length === 1 ? 'Móvil conectado' : `${activos.length} móviles conectados`}`
+              : manuales.length ? '📱 Móvil que sincroniza a mano' : solos.length ? '📱 Móvil sin sincronizar ahora' : '📱 Ningún móvil conectado' }),
+          lista.map((a) => h('span', { class: 'movil-linea', text: `${[a.tipo, a.nombre].filter(Boolean).join(' ')} · ${a.manual ? 'desde la página web, a mano · ' : ''}última sincronización ${hace(a)}${a.pendiente ? ' · le faltan cambios de este PC' : ''}` })),
+          atrasados.length > 0 && h('span', { class: 'movil-linea', text: 'Has cambiado algo en este PC que el móvil aún no tiene. En el móvil (misma wifi), toca «🔄 Sincronizar con el PC».' }),
+          !activos.length && !atrasados.length && h('span', { class: 'movil-linea', text: manuales.length ? 'Desde la página web, los cambios se pasan cuando en el móvil se toca «🔄 Sincronizar con el PC» (con la misma wifi).'
             : solos.length ? 'Abre la app en el móvil (con la misma wifi) y se sincroniza sola.' : 'Escanea con el móvil el código QR de aquí abajo.' }));
       };
       const mirarMoviles = () => {
@@ -4912,13 +4915,15 @@
     let ultimo = { activos: 0, lista: 0, manual: null };
     const pintarUno = (chip) => {
       const { activos, lista, manual } = ultimo;
-      const bien = activos > 0 || Boolean(manual);
+      const falta = Boolean(manual && manual.pendiente); // el móvil a mano se ha quedado atrás
+      const bien = !falta && (activos > 0 || Boolean(manual));
       chip.classList.toggle('con-movil', bien);
       chip.classList.toggle('sin-movil', !bien);
-      chip.textContent = activos > 0 ? '📱 conectado' : manual ? `📱 a mano · ${haceCuanto(Date.now() - manual.hace)}` : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
-      chip.title = activos > 0 ? 'Hay un móvil sincronizando con este PC'
-        : manual ? 'Un móvil con la app de internet sincroniza con este PC cuando lo pide (botón «Sincronizar» del móvil)'
-          : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
+      chip.textContent = falta ? '📱 falta pasar al móvil' : activos > 0 ? '📱 conectado' : manual ? `📱 a mano · ${haceCuanto(Date.now() - manual.hace)}` : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
+      chip.title = falta ? 'Hay cambios en este PC que un móvil aún no tiene: en ese móvil, toca «Sincronizar con el PC»'
+        : activos > 0 ? 'Hay un móvil sincronizando con este PC'
+          : manual ? 'Un móvil con la app de internet sincroniza con este PC cuando lo pide (botón «Sincronizar» del móvil)'
+            : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
     };
     const nuevo = (id) => {
       const c = h('button', { ...(id ? { id } : {}), class: 'chip-movil sin-movil', type: 'button', 'aria-label': 'Estado del móvil: ver en Ajustes',
@@ -4935,6 +4940,7 @@
     window.chipMovilNuevo = () => nuevo();
     $('b-ajustes').before(nuevo('b-movil'));
     const avisadas = new Map(); // los que sincronizan a mano: cuándo se avisó de su última vez
+    let avisadoAtras = false; // ya se ha dicho que hay un móvil a mano sin los últimos cambios
     let habia = null; // si había un móvil conectado en la última mirada (null: aún no se ha mirado)
     const mirar = async () => {
       try {
@@ -4943,7 +4949,14 @@
         // (los que sincronizan a mano no cuentan para «conectado / ya no está conectado»)
         const activos = lista.filter((a) => !a.manual && a.hace < 45 * 1000).length;
         const manuales = lista.filter((a) => a.manual).sort((a, b) => a.hace - b.hace);
-        pintarChip(activos, lista.filter((a) => !a.manual).length, manuales[0] || null);
+        // (el que se ha quedado atrás, si lo hay, va primero: es el que importa)
+        const atras = manuales.find((a) => a.pendiente) || null;
+        pintarChip(activos, lista.filter((a) => !a.manual).length, atras || manuales[0] || null);
+        if (atras && !avisadoAtras) {
+          avisadoAtras = true;
+          avisar(`📱 Hay cambios en el PC que ${[atras.tipo, atras.nombre].filter(Boolean).join(' ')} aún no tiene: en el móvil, toca «🔄 Sincronizar con el PC»`);
+        }
+        if (!atras) avisadoAtras = false;
         // Cada vez que uno de esos sincroniza, se dice (una vez por sincronización)
         // (por el nº de veces que ha sincronizado, que da el programa: por la hora, dos seguidas se confundían)
         for (const a of manuales) {
