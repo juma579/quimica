@@ -4440,6 +4440,114 @@
     return true;
   };
 
+  // ─── Usuarios en la app del PC (versión 111) ───
+  // La pantalla del PC guarda su propia copia de los datos (como un móvil). Si la carpeta del programa es
+  // otra (cambió de usuario, o la vaciaron), esa copia NO se le puede pasar: era del usuario de antes.
+  // `quimica.pc-datos-id` es el id de la carpeta con la que esta pantalla estaba sincronizada.
+  // Se vacía sin pasar por alCambiarDatos (que apuntaría «borrados» y los mandaría al programa)
+  const vaciarEstaPantalla = async () => {
+    // Lo de ahora, por si acaso (sin fotos: no caben en localStorage)
+    try { localStorage.setItem('quimica.antes-de-cambiar-de-usuario', JSON.stringify({ fecha: Date.now(), recetas, cuaderno: leerCuaderno() })); } catch { /* sin sitio */ }
+    recetas = [];
+    guardar('quimica.recetas', recetas);
+    guardar('quimica.cuaderno', K.limpiar({}));
+    localStorage.removeItem('quimica.sincro');
+    for (const id of await window.Fotos.ids().catch(() => [])) await window.Fotos.borrar(id).catch(() => {});
+    pcAlDia = null;
+    pintarLista();
+    pintarCuadernos();
+  };
+  let preguntandoCarpeta = false;
+  let carpetaYaPreguntada = null;
+  // hola: lo que dice /api/hola. Si es otra carpeta que la de esta pantalla, pregunta qué hacer
+  const revisarCarpeta = async (hola) => {
+    if (!enElPC || !pcVisto || !hola || !hola.id || preguntandoCarpeta || carpetaYaPreguntada === hola.id) return;
+    const guardado = leer('quimica.pc-datos-id', null);
+    if (!guardado) { guardar('quimica.pc-datos-id', hola.id); return; }
+    if (guardado === hola.id) return;
+    preguntandoCarpeta = true;
+    try {
+      const r = await preguntar({ texto: 'Esta carpeta de datos es otra',
+        detalle: `Esta pantalla estaba con otros datos (${hola.usuario ? `ahora el usuario es «${hola.usuario}»` : 'la carpeta ha cambiado, o la han vaciado'}). ¿Qué hago con lo que tiene guardado?`,
+        si: 'Usar solo lo de la carpeta', otro: 'Pasar lo de esta pantalla a la carpeta', no: 'Ahora no' });
+      if (r === true) { await vaciarEstaPantalla(); guardar('quimica.pc-datos-id', hola.id); await sincronizar({ avisarFallo: true }); }
+      else if (r === 'otro') { guardar('quimica.pc-datos-id', hola.id); await sincronizar({ avisarFallo: true }); }
+      else carpetaYaPreguntada = hola.id; // «Ahora no»: no se vuelve a preguntar hasta que se abra de nuevo
+    } finally { preguntandoCarpeta = false; }
+  };
+  // El panel de usuarios. alCambiar: para que Ajustes se repinte (código y QR nuevos)
+  const abrirUsuarios = (alCambiar) => {
+    const { cuerpo } = abrirPanel('👤 Usuarios');
+    const pedir = async (datos) => {
+      try {
+        const resp = await fetch('/api/usuarios', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos) });
+        const j = await resp.json();
+        if (!resp.ok) { avisar(j.error || 'No se ha podido'); return null; }
+        return j;
+      } catch { avisar('No se encuentra el programa Química PC'); return null; }
+    };
+    // Después de pasar a otro usuario: esta pantalla suelta lo del anterior y trae lo de este
+    const yaCambiado = async (j) => {
+      await vaciarEstaPantalla();
+      guardar('quimica.pc-datos-id', j.id);
+      await sincronizar({ avisarFallo: true });
+      avisar(`👤 Ahora usas «${j.usuario}». Los móviles tienen que conectarse con el código de este usuario.`);
+      alCambiar();
+      pintar();
+    };
+    const pintar = async () => {
+      let hola;
+      try { hola = await (await pedirPC('', '', '/api/hola')).json(); } catch { poner(cuerpo, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })); return; }
+      const nombrar = async (texto, valor) => {
+        const n = await preguntar({ texto, campo: { value: valor || '', placeholder: 'Nombre', 'aria-label': 'Nombre del usuario', maxlength: 40 }, si: 'Guardar', no: 'Cancelar' });
+        return typeof n === 'string' && n.trim() ? n.trim() : null;
+      };
+      poner(cuerpo,
+        h('p', { class: 'nota', text: 'Cada usuario tiene sus recetas, su cuaderno, sus fotos y su código. Solo uno a la vez. Al cambiar, esta pantalla pasa a mostrar los datos del otro y los móviles tienen que conectarse con su código. Nada se borra.' }),
+        (hola.usuarios || []).map((u) => h('div', { class: 'caja' },
+          h('p', {}, h('b', { text: `${u.activo ? '✅ ' : ''}${u.nombre}` }), u.activo ? ' · el que usas' : ''),
+          h('p', { class: 'ruta-datos', text: u.carpeta }),
+          !u.activo && h('button', { class: 'boton', type: 'button', text: 'Usar este usuario', onclick: async () => {
+            if (!await preguntar({ texto: `¿Cambiar a «${u.nombre}»?`, detalle: 'Esta pantalla pasará a mostrar sus recetas, cuaderno y fotos. Lo del usuario de ahora no se borra, queda en su carpeta. Los móviles conectados con el código de ahora tendrán que conectarse con el de este usuario.', si: 'Cambiar', no: 'Cancelar' })) return;
+            await sincronizar(); // lo que falte por pasar, a la carpeta de ahora
+            const j = await pedir({ accion: 'cambiar', carpeta: u.carpeta });
+            if (j) await yaCambiado(j);
+          } }),
+          h('button', { class: 'boton discreto', type: 'button', text: '✏️ Cambiar el nombre', onclick: async () => {
+            const n = await nombrar('Nombre del usuario', u.nombre);
+            if (n && await pedir({ accion: 'renombrar', carpeta: u.carpeta, nombre: n })) { alCambiar(); pintar(); }
+          } }),
+          !u.activo && h('button', { class: 'boton discreto', type: 'button', text: '🗑️ Quitar de la lista (no borra sus datos)', onclick: async () => {
+            if (!await preguntar({ texto: `¿Quitar a «${u.nombre}» de la lista?`, detalle: `Sus datos NO se borran: se quedan en ${u.carpeta}. Se puede volver a añadir con «Añadir un usuario que ya tengo».`, si: 'Quitar', no: 'Cancelar' })) return;
+            if (await pedir({ accion: 'quitar', carpeta: u.carpeta })) pintar();
+          } }))),
+        h('button', { class: 'boton', type: 'button', text: '＋ Nuevo usuario', onclick: async () => {
+          const n = await nombrar('Nombre del usuario nuevo', '');
+          if (!n) return;
+          await sincronizar();
+          const j = await pedir({ accion: 'nuevo', nombre: n });
+          if (j) await yaCambiado(j);
+        } }),
+        h('button', { class: 'boton secundario', type: 'button', text: '📂 Añadir un usuario que ya tengo…', onclick: async () => {
+          let datos = { accion: 'anadir', elegir: true };
+          if (!hola.dialogoCarpeta) {
+            const ruta = await preguntar({ texto: '📂 Carpeta con sus datos', detalle: 'Escribe la ruta completa de la carpeta que ya tiene los datos (la que tiene datos.json).',
+              campo: { placeholder: '/ruta/completa/de/la/carpeta', 'aria-label': 'Carpeta con sus datos', autocapitalize: 'off' }, si: 'Añadir', no: 'Cancelar' });
+            if (!ruta || !ruta.trim()) return;
+            datos = { accion: 'anadir', carpeta: ruta.trim() };
+          } else {
+            avisar('Se ha abierto el cuadro de carpetas en este PC (si no lo ves, puede estar detrás del navegador)');
+          }
+          await sincronizar();
+          const j = await pedir(datos);
+          if (!j) return;
+          if (j.cancelado) { avisar('No se ha cambiado nada'); return; }
+          await yaCambiado(j);
+        } }));
+    };
+    pintar();
+  };
+
   // ─── Escanear el QR de Química PC con la cámara de la app (versión 98, lo pidió el usuario) ───
   // Pide la cámara (el permiso lo pide Capacitor la primera vez), lee cada fotograma con jsQR
   // (www/vendor/jsQR.js, se carga solo aquí) y, si el QR es el enlace de Química PC de la red de casa
@@ -4566,14 +4674,17 @@
       };
       setTimeout(mirarMoviles, 4000);
       const cargarInfo = () => pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
+        // El usuario de ahora (versión 111): cada uno con su carpeta de datos y su código
+        h('p', {}, '👤 Usuario: ', h('b', { text: r.usuario || '' })),
+        h('button', { class: 'boton secundario', type: 'button', text: '🔁 Cambiar de usuario…', onclick: () => abrirUsuarios(() => { cargarInfo(); dibujarQR(); }) }),
         h('p', { class: 'nota', text: 'A mano, sin QR (en el móvil: ⚙️ Ajustes → 💻 Conectar con el PC):' }),
         h('p', {}, 'Dirección: ', h('b', { text: (r.direcciones || []).join('  o  ') || '(este PC no está en ninguna red)' })),
         h('p', {}, 'Código: ', h('b', { class: 'codigo-pc', text: r.codigo })),
         // (lo del cable solo si este PC tiene las herramientas de Android; la carpeta es la de quien lo abre)
         h('p', { class: 'nota', text: `${r.cable ? 'O por cable USB (Android): conecta el cable y, en el móvil, «🔌 Por cable USB». ' : ''}Tus datos y fotos se guardan en la carpeta:` }),
         h('p', { class: 'ruta-datos', text: r.carpeta }),
-        // Cambiar la carpeta de datos (versión 103): se copia lo que haya y se sigue ahí
-        h('button', { class: 'boton secundario', type: 'button', text: '📁 Cambiar la carpeta de datos…', onclick: async () => {
+        // Mover los datos de este usuario a otra carpeta (versión 103): se copia lo que haya y se sigue ahí
+        h('button', { class: 'boton secundario', type: 'button', text: '📁 Mover los datos de este usuario a otra carpeta…', onclick: async () => {
           let cuerpo = { elegir: true };
           if (!r.dialogoCarpeta) {
             const ruta = await preguntar({ texto: '📁 Carpeta de datos', detalle: 'Escribe la ruta completa de una carpeta vacía. Se copia ahí todo lo que tienes y se sigue guardando allí; la de antes no se borra.',
@@ -4591,28 +4702,6 @@
             avisar(`Hecho: los datos se guardan ahora en ${j.carpeta}. La carpeta de antes no se ha borrado.`);
             cargarInfo();
           } catch { avisar('No se ha podido cambiar la carpeta'); }
-        } }),
-        // Usar una carpeta que YA tiene datos (versión 110): por ejemplo, tras descargar el programa en otro sitio
-        h('button', { class: 'boton secundario', type: 'button', text: '📂 Usar una carpeta que ya tiene mis datos…', onclick: async () => {
-          let cuerpo = { usar: true, elegir: true };
-          if (!await preguntar({ texto: '¿Usar otra carpeta de datos?', detalle: 'Se dejará de usar la carpeta de ahora y se usará la que elijas, con sus recetas, cuaderno y fotos tal cual (no se copia nada). La de ahora no se borra. Los móviles conectados tendrán que poner el código de esa carpeta.', si: 'Elegir la carpeta', no: 'Cancelar' })) return;
-          if (!r.dialogoCarpeta) {
-            const ruta = await preguntar({ texto: '📂 Carpeta con tus datos', detalle: 'Escribe la ruta completa de la carpeta que ya tiene tus datos (la que tiene datos.json).',
-              campo: { placeholder: '/ruta/completa/de/la/carpeta', 'aria-label': 'Carpeta con tus datos', autocapitalize: 'off' }, si: 'Usar', no: 'Cancelar' });
-            if (!ruta || !ruta.trim()) return;
-            cuerpo = { usar: true, carpeta: ruta.trim() };
-          } else {
-            avisar('Se ha abierto el cuadro de carpetas en este PC (si no lo ves, puede estar detrás del navegador)');
-          }
-          try {
-            const resp = await fetch('/api/carpeta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
-            const j = await resp.json();
-            if (!resp.ok) { avisar(j.error || 'No se ha podido usar esa carpeta'); return; }
-            if (j.cancelado) { avisar('No se ha cambiado nada'); return; }
-            avisar(`Hecho: se usa la carpeta ${j.carpeta}. Los móviles tendrán que conectarse con el código de esta carpeta.`);
-            cargarInfo();
-            sincronizar();
-          } catch { avisar('No se ha podido usar esa carpeta'); }
         } }),
         h('p', { class: 'nota', text: '🔒 Por la wifi, conéctalo solo en una red de confianza (la de casa): lo que se pasa no va cifrado. En una wifi pública o de la universidad, mejor el cable.' }))).catch(() => poner(info, h('p', { class: 'nota', text: 'No se encuentra el programa Química PC.' })));
       cargarInfo();
@@ -4970,6 +5059,7 @@
     const mirar = async () => {
       try {
         const r = await (await pedirPC('', '', '/api/hola', { espera: 4000 })).json();
+        revisarCarpeta(r);
         const lista = r.aparatos || [];
         // (los que sincronizan a mano no cuentan para «conectado / ya no está conectado»)
         const activos = lista.filter((a) => !a.manual && a.hace < 45 * 1000).length;
@@ -5004,8 +5094,13 @@
   // La conexión con el PC: al abrir, al volver a la app y cada 15 s (si hay PC)
   (async () => {
     if (enElPC) {
-      try { pcVisto = (await (await pedirPC('', '', '/api/hola', { espera: 3000 })).json()).app === 'quimica-pc'; } catch { pcVisto = false; }
-      if (pcVisto) { document.title = 'Química (PC)'; document.body.classList.add('en-pc'); vigilarMoviles(); }
+      let hola = null;
+      try { hola = await (await pedirPC('', '', '/api/hola', { espera: 3000 })).json(); pcVisto = hola.app === 'quimica-pc'; } catch { pcVisto = false; }
+      if (pcVisto) {
+        document.title = 'Química (PC)'; document.body.classList.add('en-pc'); vigilarMoviles();
+        // ¿es la misma carpeta con la que estaba esta pantalla? (antes de sincronizar, para no pasarle lo de otra)
+        await revisarCarpeta(hola);
+      }
     }
     // En la app de internet conectada al PC: «💻 al día» o «💻 pasar al PC», que al tocarlo sincroniza
     if (enLaWeb) {
