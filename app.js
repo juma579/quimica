@@ -3299,7 +3299,8 @@
     // una recuerda por dónde iba, y la elegida se recuerda por cuaderno (quimica.pagina-cuaderno)
     const PAGINAS = ['bitacora', 'muestras', 'fotos'];
     const recordadaC = leer('quimica.pagina-cuaderno', {})[cid];
-    let paginaCuaderno = PAGINAS.includes(recordadaC) ? recordadaC : 'muestras';
+    // (venido de «Buscar en todos los cuadernos»: a la bitácora, que es donde está lo buscado)
+    let paginaCuaderno = consultaInicial ? 'bitacora' : PAGINAS.includes(recordadaC) ? recordadaC : 'muestras';
     const alturasC = { bitacora: 0, muestras: 0, fotos: 0 };
     let fotosCaja = null; // { clave, el, listo }: la pantalla de fotos de la pestaña
     let mostrarFotos = () => {};
@@ -3363,15 +3364,29 @@
         // Muestras que han llegado de otro cuaderno y esperan su receta (versión 115)
         const esperan = K.gruposDe(c, amb);
         const sinReceta = { id: null, nombre: ficha.nombre, pasos: [] };
+        const nuevoGrupoSinReceta = async () => {
+          const cuantas = h('input', { class: 'campo', type: 'text', inputmode: 'numeric', placeholder: 'Nº de muestras (si quieres)', autocomplete: 'off' });
+          const nombre = await preguntar({ texto: 'Nuevo grupo', detalle: [h('p', { class: 'dialogo-detalle', text: 'Unas muestras que van al mismo ritmo.' }), cuantas],
+            campo: { placeholder: 'Nombre: Grupo A…', autocapitalize: 'sentences' }, si: 'Crear', no: 'Cancelar' });
+          if (!nombre || !nombre.trim()) return;
+          const n = Q.aNumero(cuantas.value);
+          cambiarCuaderno((d) => { d.grupos.push({ id: idDe('g'), nombre: nombre.trim().slice(0, 60), recetaId: null, ...K.marcaDe(amb), muestras: n > 0 ? Math.round(n) : null }); });
+          pintar();
+        };
         poner(cuerpo, cabecera,
-          esperan.length > 0 && [h('h3', { text: '🧫 Muestras que esperan su receta' }),
-            h('p', { class: 'nota', text: 'Han llegado de otro cuaderno. Ponle una receta a este cuaderno y seguirán sus fases desde el principio.' }),
-            h('button', { class: 'boton', type: 'button', text: '📋 Ponerle receta a este cuaderno', onclick: editarEste }),
-            h('div', { class: 'lista-grupos' }, esperan.map((g) => h('button', { class: 'tarjeta grupo', 'data-id': g.id, onclick: () => abrirGrupo(sinReceta, g.id, pintar) },
-              h('h3', {}, g.nombre, g.muestras != null && h('small', { class: 'grupo-muestras', text: ` · ${muestrasTexto(g.muestras)}` })),
-              h('p', { text: textoEstado(estadoGrupo(c, g)) }),
-              g.vieneDe && h('small', { class: 'nota', text: `📥 Viene del cuaderno «${g.vieneCuaderno || 'otro'}»` }))))],
-          !esperan.length && h('p', { class: 'nota', text: 'Ponle una receta con ✏️ para tener grupos de muestras, fases, disoluciones y el árbol. Mientras, puedes apuntar notas y fotos, y escribir en «📝 Notas» (a la derecha).' }),
+          // Los grupos ya valen sin receta (versión 117): se crean aquí o llegan de otro cuaderno; esperan
+          // su receta para seguir fases. Con receta puesta, pasan a ser de ella
+          h('h3', { text: esperan.length ? '🧫 Muestras que esperan su receta' : '🧫 Muestras' }),
+          h('p', { class: 'nota', text: esperan.length
+            ? 'Ponle una receta a este cuaderno y seguirán sus fases desde el principio. Mientras, puedes apuntar medidas, notas y fotos de cada grupo.'
+            : 'Aún no hay muestras. Crea un grupo (o pásalas desde otro cuaderno): cuando le pongas receta, seguirán sus fases.' }),
+          h('div', { class: 'lista-grupos' }, esperan.map((g) => h('button', { class: 'tarjeta grupo', 'data-id': g.id, onclick: () => abrirGrupo(sinReceta, g.id, pintar) },
+            h('h3', {}, g.nombre, g.muestras != null && h('small', { class: 'grupo-muestras', text: ` · ${muestrasTexto(g.muestras)}` })),
+            h('p', { text: textoEstado(estadoGrupo(c, g)) }),
+            g.vieneDe && h('small', { class: 'nota', text: `📥 Viene del cuaderno «${g.vieneCuaderno || 'otro'}»` })))),
+          h('div', { class: 'botones-fila' },
+            h('button', { class: 'boton secundario', type: 'button', text: '＋ Nuevo grupo', onclick: nuevoGrupoSinReceta }),
+            h('button', { class: 'boton', type: 'button', text: '📋 Ponerle receta a este cuaderno', onclick: editarEste })),
           h('h3', { text: '📖 Bitácora' }),
           h('button', { class: 'boton secundario', text: '✍️ Apuntar una nota', onclick: async () => {
             const r = await pedirApunte({ texto: `✍️ Nota · ${ficha.nombre}` });
