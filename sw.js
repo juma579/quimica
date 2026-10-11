@@ -8,7 +8,7 @@ importScripts('version.js');
 const COPIA = `quimica-${VERSION_WEB}`;
 const ARCHIVOS = ['./', 'index.html', 'estilos.css', 'version.js', 'quimica.js', 'ia.js', 'cuaderno.js', 'fotos.js', 'sincronizar.js', 'app.js',
   'manifest.webmanifest', 'icono.svg', 'iconos/icono-180.png', 'iconos/icono-192.png', 'iconos/icono-512.png',
-  'vendor/UTIF.js', 'vendor/pako_inflate.min.js'];
+  'vendor/UTIF.js', 'vendor/pako_inflate.min.js', 'vendor/jsQR.js', 'vendor/qrcode.js'];
 
 // Pedidos a internet de verdad (`cache: 'reload'`): si no, el navegador puede dar lo que tenía guardado
 // de hace unos minutos (GitHub Pages deja guardarlo 10 min) y la copia nueva quedaría con archivos viejos

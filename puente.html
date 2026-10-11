@@ -36,9 +36,12 @@
     return;
   }
   let hecho = false;
+  // Solo la app de Química en internet (y localhost, para las pruebas): otra web cualquiera no puede
+  // usar esta ventana para probar códigos contra el PC (versión 124; antes valía cualquier https)
+  const deLaApp = (o) => o === 'https://juma579.github.io' || /^https:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o);
   addEventListener('message', async (e) => {
     const d = e.data;
-    if (hecho || !d || d.tipo !== 'quimica-sincronizar' || !/^https:\/\//.test(e.origin) || !e.source) return;
+    if (hecho || !d || d.tipo !== 'quimica-sincronizar' || !deLaApp(e.origin) || !e.source) return;
     hecho = true;
     const contestar = (m) => { try { e.source.postMessage(m, e.origin); } catch { /* la app ya no está */ } };
     contestar({ tipo: 'quimica-recibido' });
@@ -59,7 +62,12 @@
         body: JSON.stringify({ estado: d.estado, fotos: fotosApp.map((f) => f.id) }), espera: 120000 })).json();
       // Las fotos que el PC no tiene, se le mandan; las que tiene y la app no, se traen
       const mandar = fotosApp.filter((f) => (r.pedir || []).includes(f.id));
-      const traer = (r.tiene || []).filter((id) => !fotosApp.some((f) => f.id === id));
+      // (solo las que usa algo de lo juntado: las de cosas borradas no se traen; versión 124)
+      const usadas = new Set();
+      const reg = (r.estado && r.estado.registros) || {};
+      for (const x of Object.values(reg.entradas || {})) for (const f of (x && x.v && x.v.fotos) || []) usadas.add(f);
+      for (const x of Object.values(reg.cuadernos || {})) if (x && x.v && x.v.foto) usadas.add(x.v.foto);
+      const traer = (r.tiene || []).filter((id) => usadas.has(id) && !(d.tiene || []).includes(id) && !fotosApp.some((f) => f.id === id));
       let n = 0;
       const total = mandar.length + traer.length;
       for (const f of mandar) {

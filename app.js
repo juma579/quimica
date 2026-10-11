@@ -472,7 +472,7 @@
     abrirCapa(fondo);
   };
   const miniaturas = (ids) => (ids && ids.length ? h('div', { class: 'miniaturas' }, ids.map((id) => {
-    const img = h('img', { alt: 'Foto' });
+    const img = h('img', { alt: 'Foto', loading: 'lazy', decoding: 'async' });
     urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
     return h('button', { class: 'miniatura', 'aria-label': 'Ver la foto', onclick: () => verFoto(id) }, img);
   })) : null);
@@ -910,6 +910,77 @@
     }
     return null;
   };
+  // Deslizar entre pantallas siguiendo al dedo (versión 123, lo pidió el usuario: «que el gesto de
+  // pasar de izquierda a derecha se vea más fluido»). Antes, la pantalla cambiaba de golpe al soltar
+  // (si pasaban de 70 px). Ahora la pantalla va pegada al dedo mientras se arrastra (con resistencia
+  // si ya no hay más en ese lado), cambia al soltar si se arrastró más de 60 px o fue un tirón
+  // rápido, y la nueva entra deslizándose desde ese lado; si no, la de antes vuelve suavemente.
+  //   cuerpo: el que se desplaza · hojas: selector de las pantallas · orden: sus nombres, de izquierda
+  //   a derecha · actual(): cuál se ve · ir(nombre): la cambia · activo(): si el gesto vale ahora
+  const deslizarPantallas = (cuerpo, { hojas, orden, actual, ir, activo }) => {
+    let d = null;
+    // (algo que se desplaza de lado por sí mismo —el árbol, una fila de botones— se queda con el gesto)
+    const sePuedeDeLado = (el) => {
+      for (let x = el; x && x !== cuerpo; x = x.parentElement) {
+        if (x.scrollWidth > x.clientWidth + 2 && /(auto|scroll)/.test(getComputedStyle(x).overflowX)) return true;
+      }
+      return false;
+    };
+    const hojaVisible = () => cuerpo.querySelector(`${hojas}:not([hidden])`);
+    const vecinoDe = (dx) => orden[orden.indexOf(actual()) + (dx < 0 ? 1 : -1)] || null;
+    cuerpo.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      d = e.touches.length === 1 && activo() && !e.target.closest('input, textarea, select, .arbol-caja, .miniaturas, .tabla-fotos, .tabla-medidas, .galeria, .comp-marco') && !sePuedeDeLado(e.target)
+        ? { x: t.clientX, y: t.clientY, t: Date.now(), eje: null, hoja: null } : null;
+    }, { passive: true });
+    cuerpo.addEventListener('touchmove', (e) => {
+      if (!d) return;
+      if (e.touches.length !== 1) { d = null; return; }
+      const t = e.touches[0];
+      const dx = t.clientX - d.x;
+      const dy = t.clientY - d.y;
+      if (!d.eje) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        d.eje = Math.abs(dx) > 1.2 * Math.abs(dy) ? 'h' : 'v';
+        if (d.eje === 'h') d.hoja = hojaVisible();
+      }
+      if (d.eje !== 'h' || !d.hoja) return;
+      if (e.cancelable) e.preventDefault();
+      // (con vecino, sigue al dedo casi igual; sin él, cuesta más: «no hay más por ese lado»)
+      const k = vecinoDe(dx) ? 0.85 : 0.25;
+      d.hoja.style.transform = `translateX(${Math.round(dx * k)}px)`;
+      d.hoja.style.opacity = String(1 - Math.min(0.45, Math.abs(dx) / 500));
+    }, { passive: false });
+    const soltar = (e, cancelado) => {
+      const g = d;
+      d = null;
+      if (!g || g.eje !== 'h' || !g.hoja) return;
+      const t = e.changedTouches && e.changedTouches[0];
+      const dx = t ? t.clientX - g.x : 0;
+      const velocidad = Math.abs(dx) / Math.max(1, Date.now() - g.t); // px por ms
+      const vecino = vecinoDe(dx);
+      const vale = !cancelado && vecino && (Math.abs(dx) > 60 || (Math.abs(dx) > 28 && velocidad > 0.45));
+      const vieja = g.hoja;
+      const estilo = { transform: vieja.style.transform || 'none', opacity: vieja.style.opacity || '1' };
+      vieja.style.transform = '';
+      vieja.style.opacity = '';
+      const suave = { duration: 190, easing: 'cubic-bezier(.2,.8,.2,1)' };
+      if (vale) {
+        ir(vecino);
+        const nueva = hojaVisible();
+        if (nueva && nueva.animate) {
+          nueva.classList.remove('entra-izq', 'entra-der');
+          const desde = dx < 0 ? 56 : -56;
+          nueva.animate([{ transform: `translateX(${desde}px)`, opacity: 0.35 }, { transform: 'none', opacity: 1 }], suave);
+        }
+      } else if (vieja.animate) {
+        // (no llega a cambiar: vuelve a su sitio)
+        vieja.animate([estilo, { transform: 'none', opacity: '1' }], { duration: 160, easing: 'ease-out' });
+      }
+    };
+    cuerpo.addEventListener('touchend', (e) => soltar(e, false), { passive: true });
+    cuerpo.addEventListener('touchcancel', (e) => soltar(e, true), { passive: true });
+  };
   const buscarMarca = (caja, m) => (m ? caja.querySelector(`[${m.marca}="${CSS.escape(m.valor)}"]`)
     || (m.marca === 'data-fase' ? caja.querySelector(`[data-paso="${CSS.escape(m.valor)}"]`) : null) : null);
   // Desplaza la caja para que eso quede donde estaba (o, sin desfase, arriba con un margen)
@@ -1149,21 +1220,9 @@
       const nueva = cuerpo.querySelector(`.pagina-receta[data-pagina="${nombre}"]`);
       if (nueva) { nueva.classList.remove('entra-izq', 'entra-der'); void nueva.offsetWidth; nueva.classList.add(nombre === 'pasos' ? 'entra-der' : 'entra-izq'); }
     };
-    // Deslizar: un gesto sobre todo horizontal y de más de 70 px (no en una casilla ni en algo que se
-    // desplaza de lado)
-    let dedo0 = null;
-    cuerpo.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
-      dedo0 = e.touches.length === 1 && !e.target.closest('input, textarea, select, .arbol-caja, .miniaturas') ? { x: t.clientX, y: t.clientY } : null;
-    }, { passive: true });
-    cuerpo.addEventListener('touchend', (e) => {
-      if (!dedo0 || leer('quimica.receta-junta', false) === true) return;
-      const t = e.changedTouches[0];
-      const dx = t.clientX - dedo0.x;
-      const dy = t.clientY - dedo0.y;
-      dedo0 = null;
-      if (Math.abs(dx) > 70 && Math.abs(dx) > 1.6 * Math.abs(dy)) irPagina(dx < 0 ? 'pasos' : 'datos');
-    }, { passive: true });
+    // Deslizar: la pantalla sigue al dedo (versión 123; ver deslizarPantallas)
+    deslizarPantallas(cuerpo, { hojas: '.pagina-receta', orden: ['datos', 'pasos'], actual: () => paginaActual, ir: irPagina,
+      activo: () => leer('quimica.receta-junta', false) !== true });
 
     const pintar = () => {
       titulo.textContent = receta.nombre;
@@ -2344,7 +2403,7 @@
   // El Cuaderno 1 de una receta no cambia de receta; uno vacío (que no sea ese) se puede quitar
   // Una foto del almacén de fotos, para ponerla donde sea (usa urlDe, que ya la guarda en memoria)
   const imagenFoto = (id) => {
-    const img = h('img', { alt: '' });
+    const img = h('img', { alt: '', loading: 'lazy', decoding: 'async' });
     urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
     return img;
   };
@@ -2530,7 +2589,7 @@
     const enAp = new Map(quedan.map((id) => { const a = aparts.find((x) => x.titulo === K.infoFoto(e, id).apartado); return [id, a ? a.k : '']; }));
     const cajaFotos = h('div', { class: 'apartados-editor' });
     const miniatura = (id) => {
-      const img = h('img', { alt: 'Foto' });
+      const img = h('img', { alt: 'Foto', loading: 'lazy', decoding: 'async' });
       urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
       return h('span', { class: 'miniatura con-apartado' }, img,
         h('button', { class: 'quitar-foto', type: 'button', 'aria-label': 'Quitar la foto', text: '✕', onclick: () => { quedan = quedan.filter((x) => x !== id); pintarFotos(); } }),
@@ -3373,9 +3432,10 @@
   };
 
   const abrirCuadernoDe = (cid, recetaIdInicial, alVolver, consultaInicial = '') => {
-    // ✏️ arriba: cambiar el nombre del cuaderno, su receta o de qué va (lo pone pintar)
+    // Cambiar el nombre del cuaderno, su receta o de qué va: con el ✏️ de su cajita de arriba (lo pone
+    // pintar). Antes había otro ✏️ en la barra del título, repetido (versión 122, lo pidió el usuario)
     let editarEste = null;
-    const { cuerpo, titulo, panel } = abrirPanel('📓', [h('button', { class: 'icono', 'aria-label': 'Cambiar el nombre del cuaderno', text: '✏️', onclick: () => { if (editarEste) editarEste(); } })], alVolver);
+    const { cuerpo, titulo, panel } = abrirPanel('📓', null, alVolver);
     let filtro = 'todos'; // 'todos', o el id de un grupo
     let busqueda = consultaInicial; // lo escrito en «Buscar en la bitácora» (o lo buscado en todos los cuadernos)
     let buscador = null;
@@ -3421,24 +3481,9 @@
       const nueva = cuerpo.querySelector(`.pagina-cuaderno[data-pagina="${nombre}"]`);
       if (nueva) { nueva.classList.remove('entra-izq', 'entra-der'); void nueva.offsetWidth; nueva.classList.add(hacia); }
     };
-    // Deslizar: sobre todo horizontal y de más de 70 px (no en una casilla, ni en lo que se mueve de lado)
-    let dedoC = null;
-    cuerpo.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
-      dedoC = e.touches.length === 1 && !e.target.closest('input, textarea, select, .arbol-caja, .miniaturas, .tabla-fotos, .tabla-medidas, .galeria, .comp-marco')
-        ? { x: t.clientX, y: t.clientY } : null;
-    }, { passive: true });
-    cuerpo.addEventListener('touchend', (e) => {
-      if (!dedoC || leer('quimica.receta-junta', false) === true || !cuerpo.querySelector('.pestanas-cuaderno')) return;
-      const t = e.changedTouches[0];
-      const dx = t.clientX - dedoC.x;
-      const dy = t.clientY - dedoC.y;
-      dedoC = null;
-      if (Math.abs(dx) > 70 && Math.abs(dx) > 1.6 * Math.abs(dy)) {
-        const i = PAGINAS.indexOf(paginaCuaderno) + (dx < 0 ? 1 : -1);
-        if (i >= 0 && i < PAGINAS.length) irPaginaCuaderno(PAGINAS[i]);
-      }
-    }, { passive: true });
+    // Deslizar: la pantalla sigue al dedo (versión 123; ver deslizarPantallas)
+    deslizarPantallas(cuerpo, { hojas: '.pagina-cuaderno', orden: PAGINAS, actual: () => paginaCuaderno, ir: irPaginaCuaderno,
+      activo: () => leer('quimica.receta-junta', false) !== true && Boolean(cuerpo.querySelector('.pestanas-cuaderno')) });
     const pintar = () => {
       const c = leerCuaderno();
       const ficha = K.fichaCuaderno(c, { cuadernoId: cid, recetaId: recetaIdInicial });
@@ -4193,7 +4238,7 @@
 
   // ─── Las fotos de una receta: el recopilatorio y la comparación ───
   const fotoImg = (id) => {
-    const img = h('img', { alt: '' });
+    const img = h('img', { alt: '', loading: 'lazy', decoding: 'async' });
     urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
     return img;
   };
@@ -4642,6 +4687,14 @@
     const porId = (lista) => Object.fromEntries(lista.map((x) => [x.id, x]));
     return { recetas: porId(recetas), grupos: porId(c.grupos), entradas: porId(c.entradas), disoluciones: porId(c.disoluciones), carpetas: porId(c.carpetas), cuadernos: porId(c.cuadernos), albumes: porId(c.albumes), titulos: { ...c.titulos }, comparar: { ...c.comparar } };
   };
+  // Las fotos que usa algo: las de los apuntes y la de cada cuaderno. Las demás son de cosas que se
+  // borraron (versión 124: no se pasan al PC ni se traen de él, y se pueden quitar en Ajustes)
+  const fotosUsadas = (c = leerCuaderno()) => {
+    const s = new Set();
+    for (const e of c.entradas) for (const f of e.fotos || []) s.add(f);
+    for (const k of c.cuadernos) if (k.foto) s.add(k.foto);
+    return s;
+  };
   const sellar = () => {
     const meta = S.sellar(leer('quimica.sincro', null), datosLocales(), Date.now());
     guardar('quimica.sincro', meta);
@@ -4684,6 +4737,7 @@
   let sincronizando = false;
   let otraVez = false;
   let pcAlDia = null; // { base, fecha }: el programa del PC sabe guardar todas las colecciones de aquí
+  let ultimaSincro = null; // { base, huella, version, arranque, fecha }: la última sincronización entera (versión 124)
   let avisadoViejo = false;
   let relojSincro = null;
   let estadoPC = null; // { ok, fecha, error?, cambios?, fotos? }: lo que enseña Ajustes
@@ -4704,16 +4758,34 @@
         if (falta.length) throw new Error('Química PC está desactualizado: en el PC, cierra su ventana y vuelve a abrirlo (doble clic en «Quimica PC»). Hasta entonces no se sincroniza, para no perder nada');
         pcAlDia = { base: pc.base, fecha: Date.now() };
       }
+      // (versión 124) Si aquí no ha cambiado nada desde la última vez y en el PC tampoco (su «versión»
+      // es la misma), no se manda todo: antes iban y venían todos los datos cada 15 s. Cada 2 minutos,
+      // o si se pide a mano, se hace entera igual. Un PC viejo (sin /api/version) sincroniza siempre
+      const ult = ultimaSincro;
+      if (!avisarFallo && ult && ult.base === pc.base && ult.version != null && Date.now() - ult.fecha < 120000
+        && S.huella(datosLocales()) === ult.huella) {
+        const v = await pedirPC(pc.base, pc.codigo, '/api/version', { espera: 6000 }).then((x) => x.json()).catch(() => null);
+        if (v && v.version === ult.version && v.arranque === ult.arranque) {
+          estadoPC = { ok: true, fecha: Date.now(), cambios: 0, fotos: 0 };
+          return;
+        }
+      }
       const meta = sellar();
       const datos = datosLocales();
       const huellaAntes = S.huella(datos);
       const fotosAqui = await window.Fotos.ids().catch(() => []);
+      // (solo las fotos que usa algo: las de lo borrado no se mandan; versión 124)
+      const usadasAqui = fotosUsadas();
       const r = await (await pedirPC(pc.base, pc.codigo, '/api/sincronizar', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: S.estadoDe(meta, datos), fotos: fotosAqui }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: S.estadoDe(meta, datos), fotos: fotosAqui.filter((id) => usadasAqui.has(id)) }),
       })).json();
       // Si mientras tanto se ha cambiado algo aquí, no se pisa: se vuelve a sincronizar enseguida
       if (S.huella(datosLocales()) !== huellaAntes) { otraVez = true; return; }
       const cambiadas = quedarse(r.estado);
+      // (y de las que tiene el PC, solo las que usa algo de lo juntado: FALLO de antes, versión 124 —
+      // una foto borrada aquí seguía en el PC y volvía en la siguiente sincronización, sin usarse;
+      // en el móvil del usuario había 37 así, 9 MB)
+      const usadasDespues = fotosUsadas();
       // Las fotos: las que el PC no tiene, se le mandan; las que tiene y aquí no, se traen
       let fotos = 0;
       for (const id of r.pedir || []) {
@@ -4723,7 +4795,7 @@
         await pedirPC(pc.base, pc.codigo, `/api/fotos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg', 'x-foto': info }, body: f.blob, espera: 60000 });
         fotos++;
       }
-      for (const id of (r.tiene || []).filter((x) => !fotosAqui.includes(x))) {
+      for (const id of (r.tiene || []).filter((x) => !fotosAqui.includes(x) && usadasDespues.has(x))) {
         const resp = await pedirPC(pc.base, pc.codigo, `/api/fotos/${id}`, { espera: 60000 });
         let info = {};
         try { info = JSON.parse(decodeURIComponent(resp.headers.get('x-foto') || '%7B%7D')); } catch { /* sin datos */ }
@@ -4731,6 +4803,9 @@
         fotos++;
       }
       estadoPC = { ok: true, fecha: Date.now(), cambios: cambiadas.length, fotos };
+      // (para la próxima: si nada cambia aquí ni allí, basta con preguntar la versión)
+      // (si se mandaron fotos, la versión del PC ya habrá subido: la próxima vez se hace entera una vez más)
+      ultimaSincro = r.version != null ? { base: pc.base, huella: S.huella(datosLocales()), version: r.version, arranque: r.arranque, fecha: Date.now() } : null;
       if (cambiadas.length) {
         pintarLista();
         oyentes = oyentes.filter((o) => o.el.isConnected);
@@ -4866,12 +4941,14 @@
           const datos = datosLocales();
           huellaAntes = S.huella(datos);
           const ids = await window.Fotos.ids().catch(() => []);
+          const usadas = fotosUsadas();
           const fotos = [];
-          for (const id of ids) {
+          // (solo las que usa algo; tiene: todas las de aquí, para no traer otra vez lo que ya está)
+          for (const id of ids.filter((x) => usadas.has(x))) {
             const f = await window.Fotos.leer(id).catch(() => null);
             if (f && f.blob) fotos.push({ id, blob: f.blob, nombre: f.nombre, ancho: f.ancho, alto: f.alto, fecha: f.fecha });
           }
-          mensaje = { tipo: 'quimica-sincronizar', codigo: pc.codigo || '', estado: S.estadoDe(meta, datos), fotos, colecciones: S.COLECCIONES };
+          mensaje = { tipo: 'quimica-sincronizar', codigo: pc.codigo || '', estado: S.estadoDe(meta, datos), fotos, tiene: ids, colecciones: S.COLECCIONES };
         } catch (err) { fin(fallo(`No se han podido preparar los datos (${(err && err.message) || err})`)); }
       })();
       // Lo de aquí se le manda una y otra vez hasta que diga que lo tiene (mientras carga, se pierde)
@@ -5448,6 +5525,10 @@
           ' Todo en una sola pantalla (sin pestañas: recetas y cuadernos)'),
         h('p', { class: 'nota', text: 'Por defecto, la receta tiene dos pantallas: «🧮 Datos» a la izquierda y «📋 Pasos» a la derecha. Se cambia con las pestañas de arriba o deslizando el dedo hacia un lado. Si lo prefieres, marca esto y vuelve todo seguido.' }),
         h('h3', { text: '💾 Copia de seguridad de todo' }),
+        // (versión 124) En la página web abierta en el navegador (no añadida a la pantalla de inicio),
+        // Safari del iPhone borra lo guardado por una web si pasan 7 días sin abrirla
+        enLaWeb && !(window.matchMedia && matchMedia('(display-mode: standalone)').matches) && !navigator.standalone
+          && h('p', { class: 'nota aviso-guardado', text: '⚠️ Estás usando la app en el navegador. En el iPhone, Safari puede borrar lo guardado si pasas 7 días sin abrir esta página. Para que no pase: añádela a la pantalla de inicio (Compartir → «Añadir a la pantalla de inicio») y haz copias de seguridad de vez en cuando.' }),
         h('p', { class: 'nota', text: 'Guarda en un archivo las recetas, el cuaderno entero (grupos, apuntes, disoluciones) y, si quieres, las fotos. Sirve para no perder nada si se borran los datos del navegador, se desinstala la app o cambias de móvil. No lleva la clave de Gemini.' }),
         (() => {
           const conFotos = h('input', { type: 'checkbox', checked: true });
@@ -5484,6 +5565,40 @@
             h('button', { class: 'boton secundario', text: '📥 Recuperar desde un archivo', onclick: () => archivo.click() }),
             archivo,
             estado];
+        })(),
+        // Las fotos guardadas que ya no usa nada (versión 124): son de apuntes borrados. Antes de la 124,
+        // además, la sincronización con el PC las volvía a traer (en el móvil del usuario: 37, 9 MB)
+        h('h3', { text: '🧹 Fotos que ya no se usan' }),
+        (() => {
+          const caja = h('div', {}, h('p', { class: 'nota', text: 'Mirando…' }));
+          const mirar = async () => {
+            const ids = await window.Fotos.ids().catch(() => []);
+            const usadas = fotosUsadas();
+            const sueltas = ids.filter((id) => !usadas.has(id));
+            if (!sueltas.length) { poner(caja, h('p', { class: 'nota', text: 'Ninguna: todas las fotos guardadas en este aparato se usan.' })); return; }
+            let bytes = 0;
+            for (const id of sueltas) { const f = await window.Fotos.leer(id).catch(() => null); bytes += f && f.blob ? f.blob.size : 0; }
+            const mb = (bytes / 1048576).toLocaleString('es-ES', { maximumFractionDigits: 1 });
+            const cuantas = `${sueltas.length} ${sueltas.length === 1 ? 'foto' : 'fotos'}`;
+            poner(caja,
+              h('p', { class: 'nota', text: `Hay ${cuantas} guardadas en este aparato que no usa ningún apunte ni ningún cuaderno (${mb} MB): son de cosas que se borraron.` }),
+              h('button', { class: 'boton secundario', type: 'button', text: `🧹 Quitarlas (${mb} MB)`, onclick: async () => {
+                if (!await preguntar({ texto: `¿Quitar ${cuantas} que no se usan?`, detalle: 'No las usa ningún apunte ni ningún cuaderno. Se quitan solo de este aparato (en Química PC, si lo usas, siguen en su carpeta). No se puede deshacer.', si: 'Quitar', peligro: true })) return;
+                // (otra vez, justo antes: por si mientras tanto algo ha pasado a usarlas)
+                const ahora = fotosUsadas();
+                let n = 0;
+                for (const id of sueltas.filter((x) => !ahora.has(x))) {
+                  await window.Fotos.borrar(id).catch(() => {});
+                  const u = urlsFotos.get(id);
+                  if (u) { URL.revokeObjectURL(u); urlsFotos.delete(id); }
+                  n++;
+                }
+                avisar(`🧹 Quitadas ${n} ${n === 1 ? 'foto' : 'fotos'} que no se usaban`);
+                mirar();
+              } }));
+          };
+          mirar();
+          return caja;
         })(),
         h('h3', { text: 'Solo las recetas, como texto' }),
         h('p', { class: 'nota', text: `Las recetas (${recetas.length}) también se pueden copiar y pegar en un sitio seguro (un correo para ti, una nota…).` }),
@@ -5526,44 +5641,48 @@
     return new Blob([bytes], { type: tipo || 'image/jpeg' });
   };
   // Las partes del archivo, una a una (así no hay un texto de decenas de MB de golpe)
-  const partesDeLaCopia = async (conFotos, alAvanzar) => {
-    const partes = [];
+  // alParte: si se da, cada parte se le pasa según sale (y no se juntan todas en memoria: con cientos
+  // de fotos, el texto entero podía pesar cientos de MB; versión 124)
+  const partesDeLaCopia = async (conFotos, alAvanzar, alParte = null) => {
+    const lista = [];
+    const partes = { push: async (p) => { if (alParte) await alParte(p); else lista.push(p); } };
     const cabecera = JSON.stringify({ tipo: 'quimica-copia', version: typeof VERSION_WEB === 'string' ? VERSION_WEB : '?', fecha: Date.now(),
       recetas, cuaderno: leerCuaderno(), hechos: leer('quimica.hechos', {}), ciclos: leer('quimica.ciclos', {}) });
-    partes.push(`${cabecera.slice(0, -1)},"fotos":[`);
+    await partes.push(`${cabecera.slice(0, -1)},"fotos":[`);
     if (conFotos) {
-      // (todas las fotos guardadas en este aparato)
-      const ids = await window.Fotos.ids();
+      // (las fotos guardadas en este aparato que usa algo: las de cosas borradas no; versión 124)
+      const usadas = fotosUsadas();
+      const ids = (await window.Fotos.ids()).filter((id) => usadas.has(id));
       let primera = true;
       let n = 0;
       for (const id of ids) {
         const f = await window.Fotos.leer(id);
         if (!f || !f.blob) continue;
-        partes.push(`${primera ? '' : ','}${JSON.stringify({ id: f.id, nombre: f.nombre, ancho: f.ancho, alto: f.alto, fecha: f.fecha, tipo: f.blob.type, datos: await aBase64(f.blob) })}`);
+        await partes.push(`${primera ? '' : ','}${JSON.stringify({ id: f.id, nombre: f.nombre, ancho: f.ancho, alto: f.alto, fecha: f.fecha, tipo: f.blob.type, datos: await aBase64(f.blob) })}`);
         primera = false;
         if (alAvanzar) alAvanzar(++n, ids.length);
       }
     }
-    partes.push(']}');
-    return partes;
+    await partes.push(']}');
+    return lista;
   };
   const guardarCopiaCompleta = async (conFotos, alAvanzar) => {
-    const partes = await partesDeLaCopia(conFotos, alAvanzar);
     const d = new Date();
     const nombre = `Quimica-copia-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
     const plugin = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.GuardarArchivo;
     if (plugin) {
-      // En Android, a la carpeta Descargas, en trozos de 1 MB
+      // En Android, a la carpeta Descargas, en trozos de 1 MB, según se va preparando
       let texto = '';
       let primera = true;
       const mandar = async (t, ultima) => { await plugin.escribir({ nombre, texto: t, primera, ultima }); primera = false; };
-      for (const p of partes) {
+      await partesDeLaCopia(conFotos, alAvanzar, async (p) => {
         texto += p;
         while (texto.length > 1000000) { await mandar(texto.slice(0, 1000000), false); texto = texto.slice(1000000); }
-      }
+      });
       await mandar(texto, true);
       return { nombre, donde: 'la carpeta Descargas del móvil' };
     }
+    const partes = await partesDeLaCopia(conFotos, alAvanzar);
     const archivo = new File(partes, nombre, { type: 'application/json' });
     // En el iPhone (y donde se pueda), la hoja de compartir: «Guardar en Archivos»
     if (navigator.canShare && navigator.canShare({ files: [archivo] })) {

@@ -91,7 +91,7 @@ textarea.campo { resize: vertical; min-height: 80px; }
 
 /* ─── Paneles por encima ─── */
 .panel { position: fixed; inset: 0; background: var(--fondo); display: flex; flex-direction: column; z-index: 10; }
-.panel-cuerpo { flex: 1; overflow-y: auto; padding: 12px 12px calc(var(--abajo) + 24px); }
+.panel-cuerpo { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px 12px calc(var(--abajo) + 24px); }
 .panel-cuerpo h3 { font-size: 17px; margin: 22px 0 8px; }
 .panel-cuerpo h3:first-child { margin-top: 4px; }
 .caja { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 14px; padding: 4px 12px; }
@@ -723,3 +723,7 @@ small.aviso-sentido[hidden] { display: none; }
 .informe-paso { margin: 6px 0; }
 .informe-fase { margin: 12px 0 2px; font-weight: 700; }
 .informe-subfase { margin: 6px 0 0; font-size: 12px; font-style: italic; }
+
+/* En el cuaderno las pestañas van DEBAJO de la cajita del nombre y la receta: sin margen negativo
+   arriba (en la receta lo llevan porque son lo primero de la pantalla y suben al borde). Versión 122 */
+.pestanas-cuaderno { margin-top: 10px; margin-bottom: 10px; }
