@@ -3153,7 +3153,7 @@
     const el = h('article', { class: 'informe' },
       h('header', { class: 'informe-cabecera' },
         h('h1', { text: `📓 ${ficha.nombre}` }),
-        h('p', { text: receta ? `Receta: ${receta.nombre}` : 'Sin receta (solo notas)' }),
+        h('p', { text: receta && receta.id ? `Receta: ${receta.nombre}` : 'Sin receta todavía' }),
         ficha.nota && h('p', { class: 'informe-nota', text: ficha.nota }),
         h('p', { class: 'informe-meta', text: [`Informe del ${fechaLarga(Date.now())}`, entradas.length && `${entradas.length} apuntes, del ${fechaLarga(entradas[0].fecha)} al ${fechaLarga(entradas[entradas.length - 1].fecha)}`].filter(Boolean).join(' · ') })),
       arbol && [h('h2', { text: '🌳 Cómo van las muestras' }), (() => {
@@ -3341,7 +3341,10 @@
       // (el Cuaderno 1 de una receta va siempre con ella; uno creado, con la que tenga puesta)
       const rid = cid === K.principal(recetaIdInicial) ? recetaIdInicial : ficha.recetaId || null;
       const amb = K.ambito(rid, cid);
-      receta = rid ? recetaDe(rid) || { id: rid, nombre: nombreDeReceta(c, rid), pasos: [] } : null;
+      // (sin receta todavía: una vacía, y el cuaderno es el mismo de siempre —árbol, grupos, carpetas, disoluciones,
+      // medidas, fotos y bitácora—, solo sin fases hasta que se le ponga una; versión 118)
+      receta = rid ? recetaDe(rid) || { id: rid, nombre: nombreDeReceta(c, rid), pasos: [] }
+        : { id: null, nombre: ficha.nombre, pasos: [], datos: [], calculos: [], sinReceta: true };
       // Desde la receta, «Terminar fase» apunta en el último cuaderno suyo que se haya abierto
       if (rid) ponerCuadernoActual(rid, cid);
       titulo.textContent = `📓 ${ficha.nombre}`;
@@ -3355,50 +3358,13 @@
           // La receta se abre desde aquí (atrás vuelve al cuaderno)
           rid && recetaDe(rid)
             ? h('button', { class: 'cuaderno-receta abrir-receta', onclick: () => abrirDetalle(rid) }, h('span', { text: `📋 ${receta.nombre}` }), h('span', { class: 'flecha', text: 'Abrir la receta ›' }))
-            : h('span', { class: 'cuaderno-receta', text: rid ? `📋 ${receta.nombre} (borrada)` : 'Sin receta (solo notas)' }),
+            : rid
+              ? h('span', { class: 'cuaderno-receta', text: `📋 ${receta.nombre} (borrada)` })
+              // Sin receta todavía: el mismo sitio que «Abrir la receta ›», para ponérsela
+              : h('button', { class: 'cuaderno-receta abrir-receta', type: 'button', onclick: editarEste },
+                h('span', { text: '📋 Sin receta todavía' }), h('span', { class: 'flecha', text: 'Ponerle receta ›' })),
           ficha.nota && h('p', { class: 'carpeta-nota', text: ficha.nota })),
         h('button', { class: 'icono pequeno', 'aria-label': 'Cambiar el cuaderno', text: '✏️', onclick: editarEste }));
-      // Sin receta: notas (con fotos) y la bitácora
-      if (!receta) {
-        const notas = c.entradas.filter((e) => K.casa(e, amb));
-        // Muestras que han llegado de otro cuaderno y esperan su receta (versión 115)
-        const esperan = K.gruposDe(c, amb);
-        const sinReceta = { id: null, nombre: ficha.nombre, pasos: [] };
-        const nuevoGrupoSinReceta = async () => {
-          const cuantas = h('input', { class: 'campo', type: 'text', inputmode: 'numeric', placeholder: 'Nº de muestras (si quieres)', autocomplete: 'off' });
-          const nombre = await preguntar({ texto: 'Nuevo grupo', detalle: [h('p', { class: 'dialogo-detalle', text: 'Unas muestras que van al mismo ritmo.' }), cuantas],
-            campo: { placeholder: 'Nombre: Grupo A…', autocapitalize: 'sentences' }, si: 'Crear', no: 'Cancelar' });
-          if (!nombre || !nombre.trim()) return;
-          const n = Q.aNumero(cuantas.value);
-          cambiarCuaderno((d) => { d.grupos.push({ id: idDe('g'), nombre: nombre.trim().slice(0, 60), recetaId: null, ...K.marcaDe(amb), muestras: n > 0 ? Math.round(n) : null }); });
-          pintar();
-        };
-        poner(cuerpo, cabecera,
-          // Los grupos ya valen sin receta (versión 117): se crean aquí o llegan de otro cuaderno; esperan
-          // su receta para seguir fases. Con receta puesta, pasan a ser de ella
-          h('h3', { text: esperan.length ? '🧫 Muestras que esperan su receta' : '🧫 Muestras' }),
-          h('p', { class: 'nota', text: esperan.length
-            ? 'Ponle una receta a este cuaderno y seguirán sus fases desde el principio. Mientras, puedes apuntar medidas, notas y fotos de cada grupo.'
-            : 'Aún no hay muestras. Crea un grupo (o pásalas desde otro cuaderno): cuando le pongas receta, seguirán sus fases.' }),
-          h('div', { class: 'lista-grupos' }, esperan.map((g) => h('button', { class: 'tarjeta grupo', 'data-id': g.id, onclick: () => abrirGrupo(sinReceta, g.id, pintar) },
-            h('h3', {}, g.nombre, g.muestras != null && h('small', { class: 'grupo-muestras', text: ` · ${muestrasTexto(g.muestras)}` })),
-            h('p', { text: textoEstado(estadoGrupo(c, g)) }),
-            g.vieneDe && h('small', { class: 'nota', text: `📥 Viene del cuaderno «${g.vieneCuaderno || 'otro'}»` })))),
-          h('div', { class: 'botones-fila' },
-            h('button', { class: 'boton secundario', type: 'button', text: '＋ Nuevo grupo', onclick: nuevoGrupoSinReceta }),
-            h('button', { class: 'boton', type: 'button', text: '📋 Ponerle receta a este cuaderno', onclick: editarEste })),
-          h('h3', { text: '📖 Bitácora' }),
-          h('button', { class: 'boton secundario', text: '✍️ Apuntar una nota', onclick: async () => {
-            const r = await pedirApunte({ texto: `✍️ Nota · ${ficha.nombre}` });
-            if (!r || (!r.nota && !r.fotos.length)) return;
-            apuntar({ tipo: 'nota', grupoId: null, grupo: null, recetaId: null, ...K.marcaDe(amb), receta: null, nota: r.nota, fotos: r.fotos });
-            pintar();
-          } }),
-          bitacoraBuscada(c, notas, { desde: null, alCambiar: pintar }, h('p', { class: 'nota', text: 'Aún no hay nada apuntado.' })),
-          botonCopiar(ficha.nombre, notas),
-          notas.length > 0 && h('button', { class: 'boton secundario', text: '📄 Hacer un informe con toda la historia (PDF)', onclick: () => abrirInforme(null, amb, ficha) }));
-        return;
-      }
       const grupos = K.gruposDe(c, amb);
       if (filtro !== 'todos' && !grupos.some((g) => g.id === filtro)) filtro = 'todos';
       const nuevoGrupo = async () => {
@@ -3619,7 +3585,7 @@
       const bMas = [
         h('h3', { text: 'Más' }),
         h('button', { class: 'boton secundario', text: '📄 Hacer un informe con toda la historia (PDF)', onclick: () => abrirInforme(receta, amb, ficha) }),
-        h('button', { class: 'boton secundario', text: '📓 Empezar otro cuaderno con esta receta (otro experimento)', onclick: async () => {
+        rid && h('button', { class: 'boton secundario', text: '📓 Empezar otro cuaderno con esta receta (otro experimento)', onclick: async () => {
           const id = await editarFichaCuaderno(null, rid);
           if (!id || id === 'quitado') return;
           const k = K.fichaCuaderno(leerCuaderno(), { cuadernoId: id });
