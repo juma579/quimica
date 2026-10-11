@@ -1,5 +1,7 @@
 # 🧪 Química
 
+*Esta app está hecha con Claude Code. No soy programador, solo quería una app que me fuera útil.*
+
 App para el laboratorio: **recetas** con pasos, cronómetros y cuentas automáticas (molaridad, diluciones, ácidos comerciales…), y un **cuaderno** para llevar el registro de tus muestras, disoluciones y fotos.
 
 ## 👉 Entrar en la app
