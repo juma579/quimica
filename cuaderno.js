@@ -8,11 +8,17 @@
 //     orden: su sitio en la lista (se cambia manteniendo pulsado y arrastrando; va en el grupo para
 //     que el orden pase también al PC)
 //     padre/desde: si salió de separar otro grupo, de cuál y cuándo (hereda su historia de antes)
+//     vieneDe/vieneDesde/vieneCuaderno: si llegó de otro CUADERNO (pasar): el grupo de origen, cuándo y
+//     el nombre de ese cuaderno. NO hereda su historia: está en el grupo de origen (botón para verla)
+//     pasadoA/pasadoDesde/pasadoCuaderno: si todas sus muestras pasaron a otro cuaderno: el grupo
+//     nuevo, cuándo y el nombre del cuaderno. Se queda cerrado, con su historia (estado «pasado»)
 //   entradas: [{ id, fecha, tipo, recetaId, receta, grupoId, grupo, nota, fotos: [idFoto], … }]
 //     tipo 'empezar'  { fase, otraVez }              ▶ empieza una fase (puede durar varios días)
 //     tipo 'fase'     { fase }                        🏁 termina una fase
 //     tipo 'analisis' { tecnica, entera? }            🔬 algo para analizar (entera: solo en los de antes)
 //     tipo 'separar'  { nuevoId, nuevo, cuantas }     ✂️ unas muestras pasan a otro grupo
+//     tipo 'pasar'    { nuevoId, nuevo, cuantas, haciaCuaderno }  📤 muestras que pasan a otro cuaderno
+//     tipo 'llegar'   { desdeId, desde, cuantas, deCuaderno }     📥 muestras que llegan de otro cuaderno
 //     tipo 'comparar' { comparadas: [idFoto], de }    ⚖️ lo que se vio al comparar unas fotos (enlazadas,
 //                                                     no son suyas: borrar la entrada no las borra)
 //     tipo 'nota'                                     ✍️ lo que sea
@@ -158,6 +164,8 @@
     const g = grupoDe(c, grupoId);
     // Juntado con otro: ya no sigue
     if (g && g.juntadoEn) { const a = grupoDe(c, g.juntadoEn); return { ...est, estado: 'juntado', con: a ? a.nombre : 'otro grupo', fecha: g.juntadoDesde }; }
+    // Pasado a otro cuaderno (todas sus muestras): aquí queda su historia y allí sigue
+    if (g && g.pasadoA) { const a = grupoDe(c, g.pasadoA); return { ...est, estado: 'pasado', con: a ? a.nombre : g.nombre, cuaderno: g.pasadoCuaderno || 'otro cuaderno', fecha: g.pasadoDesde }; }
     if (!g || !('siguiente' in g) || est.estado === 'en') return est;
     return { ...est, estado: est.estado === 'nada' ? 'nada' : 'espera', siguiente: g.siguiente, aMano: true };
   };
@@ -190,6 +198,8 @@
       case 'separar': return `✂️ ${e.cuantas} ${e.cuantas === 1 ? 'muestra pasa' : 'muestras pasan'} a «${e.nuevo}»`;
       case 'juntar': return `🔗 ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra se junta' : 'muestras se juntan'}` : 'Se junta'} con «${e.nuevo}»`;
       case 'recibir': return `🔗 Se le juntan ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra' : 'muestras'} ` : ''}de «${e.desde}»`;
+      case 'pasar': return `📤 ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra pasa' : 'muestras pasan'}` : 'Pasa'} al cuaderno «${e.haciaCuaderno || 'otro'}»`;
+      case 'llegar': return `📥 ${e.cuantas != null ? `Llegan ${e.cuantas} ${e.cuantas === 1 ? 'muestra' : 'muestras'}` : 'Llega'} del cuaderno «${e.deCuaderno || 'otro'}»`;
       case 'preparar': return `🧪 Preparada: ${e.disolucion}`;
       case 'comparar': return `⚖️ Comparación de ${(e.comparadas || []).length} ${(e.comparadas || []).length === 1 ? 'foto' : 'fotos'}`;
       case 'estado': return `🧪 ${e.disolucion}: ${(ESTADOS[e.estado] || e.estado || '').replace(/^\S+ /, '').toLowerCase()}`;
@@ -220,7 +230,7 @@
   // Las muestras del grupo «de» pasan al grupo «a», que sigue; «de» se queda cerrado (juntadoEn).
   // Se apunta en los dos: 'juntar' en «de» y 'recibir' en «a»
   const mismoSitio = (c, g1, g2, fases, ultimas) => {
-    if (!g1 || !g2 || g1.id === g2.id || g1.juntadoEn || g2.juntadoEn) return false;
+    if (!g1 || !g2 || g1.id === g2.id || g1.juntadoEn || g2.juntadoEn || g1.pasadoA || g2.pasadoA) return false;
     if (g1.recetaId !== g2.recetaId || cuadernoDe(g1) !== cuadernoDe(g2) || (g1.carpeta || null) !== (g2.carpeta || null)) return false;
     const e1 = estadoDe(c, g1.id, fases, ultimas);
     const e2 = estadoDe(c, g2.id, fases, ultimas);
@@ -240,6 +250,47 @@
     if (de.muestras != null) de.muestras = 0;
     c.entradas.push(e1, e2);
     return { de, a };
+  };
+
+  // ─── Pasar muestras a otro cuaderno (lo pidió el usuario: «las muestras van a pasar por otro proceso;
+  // quiero que guarden el historial, y que para acceder a él haya que darle a otro botón o que conecte
+  // con el otro cuaderno») ───
+  // No se mueve la historia: se queda donde pasó, en el grupo de origen. En el cuaderno de destino
+  // nace un grupo nuevo (limpio: su receta es otra, con otras fases) que sabe de dónde viene
+  // (vieneDe: id del grupo de origen), y el de origen sabe a cuál pasó (pasadoA). Así, desde cada uno
+  // se llega al otro. Si pasan todas, el de origen queda cerrado (estado «pasado»); si solo unas
+  // cuantas, sigue con las que le quedan.
+  //   destino: { recetaId, cuadernoId, nombre }  (cuadernoId: ámbito(), el del Cuaderno 1 = 'p-<receta>')
+  const pasar = (c, grupoId, destino, cuantas, ahora, ids) => {
+    const g = grupoDe(c, grupoId);
+    if (!g) throw new Error('Ese grupo ya no está');
+    if (!destino || !destino.recetaId) throw new Error('Elige un cuaderno con receta: es donde van a seguir');
+    if (casa(g, ambito(destino.recetaId, destino.cuadernoId))) throw new Error('Elige otro cuaderno: ese es el de ahora');
+    if (g.pasadoA || g.juntadoEn) throw new Error('Este grupo ya no sigue aquí');
+    const total = g.muestras;
+    const n = cuantas == null || cuantas === '' ? total : Math.round(Number(cuantas));
+    if (n != null && !(n >= 1)) throw new Error('Pon cuántas muestras pasan (al menos una)');
+    if (n != null && total != null && n > total) throw new Error(`El grupo tiene ${total}: no pueden pasar ${n}`);
+    const todas = n == null || total == null || n >= total;
+    const marca = marcaDe(ambito(destino.recetaId, destino.cuadernoId));
+    const nuevo = { id: ids.grupo, nombre: g.nombre, recetaId: destino.recetaId, ...marca, muestras: n == null ? null : n,
+      vieneDe: g.id, vieneDesde: ahora, vieneCuaderno: destino.deNombre || '' };
+    const origen = { recetaId: g.recetaId, ...(g.cuadernoId ? { cuadernoId: g.cuadernoId } : {}) };
+    const e1 = { id: ids.de, fecha: ahora, tipo: 'pasar', ...origen, grupoId: g.id, grupo: g.nombre, nuevoId: nuevo.id, nuevo: nuevo.nombre,
+      haciaCuaderno: destino.nombre || '', ...(n != null ? { cuantas: n } : {}) };
+    const e2 = { id: ids.a, fecha: ahora, tipo: 'llegar', recetaId: destino.recetaId, ...marca, grupoId: nuevo.id, grupo: nuevo.nombre, desdeId: g.id, desde: g.nombre,
+      deCuaderno: destino.deNombre || '', ...(n != null ? { cuantas: n } : {}) };
+    if (todas) {
+      g.pasadoA = nuevo.id;
+      g.pasadoDesde = ahora;
+      g.pasadoCuaderno = destino.nombre || '';
+      if (g.muestras != null) g.muestras = 0;
+    } else if (total != null) {
+      g.muestras = total - n;
+    }
+    c.grupos.push(nuevo);
+    c.entradas.push(e1, e2);
+    return { nuevo, de: g, todas };
   };
 
   // ─── Las disoluciones ───
@@ -348,7 +399,7 @@
   // palabra tiene que salir; una de más de 4 letras vale también con otra terminación ("denso" →
   // "densas"); una corta (SEM, CuO), solo como palabra entera ("SEM" no es "sembrado")
   const sinTildes = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const textoDeEntrada = (c, e) => [titularDe(e), e.grupo, e.nota, e.tecnica, e.fase, e.subfase, e.disolucion, e.nuevo, e.desde,
+  const textoDeEntrada = (c, e) => [titularDe(e), e.grupo, e.nota, e.tecnica, e.fase, e.subfase, e.disolucion, e.nuevo, e.desde, e.haciaCuaderno, e.deCuaderno,
     ...(e.disoluciones || []).map((x) => x.nombre), ...(e.de || []), ...(e.apartados || []),
     ...Object.values(e.fotosInfo || {}).flatMap((i) => [i.aumento, i.zona, i.apartado]),
     ...(e.fotos || []).map((id) => c.titulos && c.titulos[id])].filter(Boolean).join('\n');
@@ -374,7 +425,7 @@
     return Math.round((aUTC(dia) - aUTC(hoy)) / 864e5);
   };
   const avisosToca = (c, hoy, estadoDe, hasta = 1) => c.grupos
-    .filter((g) => g.toca && !g.juntadoEn && /^\d{4}-\d{2}-\d{2}$/.test(g.toca))
+    .filter((g) => g.toca && !g.juntadoEn && !g.pasadoA && /^\d{4}-\d{2}-\d{2}$/.test(g.toca))
     .map((g) => {
       const est = estadoDe(g);
       if (!est || (est.estado !== 'espera' && est.estado !== 'nada')) return null;
@@ -384,7 +435,7 @@
     .filter(Boolean)
     .sort((a, b) => a.dias - b.dias);
 
-  const Cuaderno = { vacio, limpiar, grupoDe, gruposDe, ordenarGrupos, mismoSitio, juntar, principal, cuadernoDe, ambito, casa, marcaDe, claveComparar, cuadernosDe, fichaCuaderno, todosLosCuadernos, carpetasDe, gruposEnCarpeta, colocarGrupos, historiaDe, estadoDe, yaHizo, faseParaEmpezar, faseParaTerminar, nombreFase, titularDe, separar,
+  const Cuaderno = { vacio, limpiar, grupoDe, gruposDe, ordenarGrupos, mismoSitio, juntar, pasar, principal, cuadernoDe, ambito, casa, marcaDe, claveComparar, cuadernosDe, fichaCuaderno, todosLosCuadernos, carpetasDe, gruposEnCarpeta, colocarGrupos, historiaDe, estadoDe, yaHizo, faseParaEmpezar, faseParaTerminar, nombreFase, titularDe, separar,
     buscar, textoDeEntrada, avisosToca, diasHasta,
     fotosDe, tituloFoto, comparadas, olvidarFotos, infoFoto, apartadosDe, momentoDe, albumesDe, tipoFoto,
     ESTADOS, disolucionDe, disolucionesDe, disponible, sugeridas, historiaDisolucion, usadaPor, nombreDisolucion };

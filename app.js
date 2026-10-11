@@ -259,6 +259,7 @@
         : `▶ En ${K.nombreFase(est.fase)} (desde el ${fechaCorta(est.fecha)})`;
       case 'terminado': return `✅ Terminado (${fechaCorta(est.fecha)})`;
       case 'juntado': return `🔗 Juntado con «${est.con}» (${fechaCorta(est.fecha)})`;
+      case 'pasado': return `📤 Pasó al cuaderno «${est.cuaderno}» (${fechaCorta(est.fecha)})`;
       default: return `✔ ${K.nombreFase(est.fase)} hecha (${fechaCorta(est.fecha)})${est.siguiente !== undefined ? ` → le toca ${K.nombreFase(est.siguiente)}${conFecha(est)}` : ''}`;
     }
   };
@@ -555,7 +556,7 @@
   // Devuelve { el, elegido() }: el grupo, null (sin grupo), { nuevo, muestras } o undefined (nuevo sin nombre)
   const elegirGrupo = (cuaderno, recetaId, marcado) => {
     // (los que se juntaron con otro ya no siguen)
-    const grupos = K.gruposDe(cuaderno, recetaId).filter((g) => !g.juntadoEn);
+    const grupos = K.gruposDe(cuaderno, recetaId).filter((g) => !g.juntadoEn && !g.pasadoA);
     let elegido = grupos.find((g) => g.id === marcado) || grupos[0] || null;
     const nombreNuevo = h('input', { class: 'campo', placeholder: 'Nombre: Grupo A…', autocapitalize: 'sentences', autocomplete: 'off' });
     const cuantasNuevo = h('input', { class: 'campo', type: 'text', inputmode: 'numeric', placeholder: 'Nº de muestras (si quieres)', autocomplete: 'off' });
@@ -2496,6 +2497,17 @@
           const de = K.grupoDe(c, x.tipo === 'juntar' ? x.grupoId : x.desdeId);
           if (de && de.juntadoEn) de.juntadoDesde = fecha;
         }
+        // Lo mismo al pasar muestras a otro cuaderno: la salida, la llegada y las marcas de los dos grupos
+        if (x.tipo === 'pasar' || x.tipo === 'llegar') {
+          const otro = c.entradas.find((y) => y.fecha === e.fecha && (x.tipo === 'pasar'
+            ? y.tipo === 'llegar' && y.grupoId === x.nuevoId && y.desdeId === x.grupoId
+            : y.tipo === 'pasar' && y.grupoId === x.desdeId && y.nuevoId === x.grupoId));
+          if (otro) otro.fecha = fecha;
+          const origen = K.grupoDe(c, x.tipo === 'pasar' ? x.grupoId : x.desdeId);
+          const llegado = K.grupoDe(c, x.tipo === 'pasar' ? x.nuevoId : x.grupoId);
+          if (origen && origen.pasadoA === (llegado && llegado.id)) origen.pasadoDesde = fecha;
+          if (llegado) llegado.vieneDesde = fecha;
+        }
       }
     });
     if (dis) dis.guardar();
@@ -2505,7 +2517,7 @@
   // Un apunte con los grupos que nombra (separar, juntar) con su nombre de ahora, por si se les cambió
   const conNombresDeAhora = (c, e) => {
     const n = e.nuevoId && K.grupoDe(c, e.nuevoId);
-    const d = e.tipo === 'recibir' && e.desdeId && K.grupoDe(c, e.desdeId);
+    const d = (e.tipo === 'recibir' || e.tipo === 'llegar') && e.desdeId && K.grupoDe(c, e.desdeId);
     return n || d ? { ...e, ...(n ? { nuevo: n.nombre } : {}), ...(d ? { desde: d.nombre } : {}) } : e;
   };
   // La bitácora: las entradas por días, lo último arriba. desde: el grupo que se está mirando
@@ -2942,9 +2954,9 @@
         est.estado === 'en'
           ? s('circle', { cx: xFin, cy: y(fin), r: 6, fill: color, ...deQuien(g.id, Infinity) })
           : s('line', { x1: xFin - 10, y1: y(fin), x2: xFin + 10, y2: y(fin), stroke: color, 'stroke-width': 4, 'stroke-linecap': 'round', ...deQuien(g.id, Infinity) }),
-        void etiquetas.push(s('g', { class: 'arbol-etiqueta', 'data-grupo': g.id, 'data-dueno': g.id, 'data-nombre': '1' }, s('text', { x: nombreX, y: nombreY, class: 'arbol-nombre', fill: color }, `${est.estado === 'terminado' ? '✅ ' : est.estado === 'juntado' ? '🔗 ' : ''}${corto(g.nombre, est.estado === 'terminado' || est.estado === 'juntado' ? LETRAS - 2 : LETRAS)}`),
+        void etiquetas.push(s('g', { class: 'arbol-etiqueta', 'data-grupo': g.id, 'data-dueno': g.id, 'data-nombre': '1' }, s('text', { x: nombreX, y: nombreY, class: 'arbol-nombre', fill: color }, `${est.estado === 'terminado' ? '✅ ' : est.estado === 'juntado' ? '🔗 ' : est.estado === 'pasado' ? '📤 ' : ''}${corto(g.nombre, est.estado === 'terminado' || est.estado === 'juntado' || est.estado === 'pasado' ? LETRAS - 2 : LETRAS)}`),
         // (en corto, para que no se monte con el de al lado; un grupo juntado ya no tiene)
-        g.muestras != null && est.estado !== 'juntado' && s('text', { x: nombreX, y: nombreY + 14, class: 'arbol-muestras' }, `🧫 ${g.muestras}`))),
+        g.muestras != null && est.estado !== 'juntado' && est.estado !== 'pasado' && s('text', { x: nombreX, y: nombreY + 14, class: 'arbol-muestras' }, `🧫 ${g.muestras}`))),
         // Una zona invisible ancha, para que sea fácil tocarlo
         s('rect', { x: xi - 14, y: y(arribaDel) - 6, width: ANCHO - 8 + 13 * vueltas.length, height: y(abajoDel) - y(arribaDel) + 44, fill: 'transparent' }));
     });
@@ -3243,7 +3255,7 @@
       // cada grupo, con su nota y sus fotos. Se apunta una entrada en cada grupo, todas con la misma
       // hora y el mismo «evento»
       const apuntarVarios = async () => {
-        const posibles = K.gruposDe(c, amb).filter((g) => !g.juntadoEn);
+        const posibles = K.gruposDe(c, amb).filter((g) => !g.juntadoEn && !g.pasadoA);
         if (!posibles.length) { avisar('Primero crea algún grupo de muestras'); return; }
         const ultima = [...c.entradas].reverse().find((e) => e.tipo === 'analisis' && e.tecnica);
         const tecnica = h('input', { class: 'campo', list: 'tecnicas', autocomplete: 'off', autocapitalize: 'sentences', value: ultima ? ultima.tecnica : 'Microscopio electrónico (SEM)' });
@@ -3350,7 +3362,9 @@
             const colorDe = (g) => arbol && arbol.colores.get(g.id);
             const tarjeta = (g) => h('button', { class: `tarjeta grupo${colorDe(g) ? ' con-color' : ''}`, 'data-id': g.id, style: colorDe(g) ? `--gc: ${colorDe(g)}` : null, onclick: () => abrirGrupo(receta, g.id, pintar) },
               h('h3', {}, g.nombre, g.muestras != null && h('small', { class: 'grupo-muestras', text: ` · ${muestrasTexto(g.muestras)}` })),
-              h('p', { text: textoEstado(estadoGrupo(c, g)) }));
+              h('p', { text: textoEstado(estadoGrupo(c, g)) }),
+              // (de otro cuaderno: su historia anterior está allí; se ve entrando al grupo)
+              g.vieneDe && h('small', { class: 'nota', text: `📥 Viene del cuaderno «${g.vieneCuaderno || 'otro'}»` }));
             const lista = (id) => h('div', { class: 'lista-grupos', 'data-lista': id || '' },
               K.gruposEnCarpeta(c, amb, id).map(tarjeta),
               h('p', { class: 'nota carpeta-vacia', text: id ? 'Vacía: mantén pulsado un grupo y arrástralo aquí.' : 'Suelta aquí un grupo para sacarlo de su carpeta.' }));
@@ -3523,6 +3537,67 @@
         // Al grupo que sigue
         cerrarCapas(1, () => abrirGrupo(receta, destino, alVolver));
       };
+      // Abre un grupo que está en otro cuaderno (de otra receta, quizá): su historial, o a dónde pasó
+      const irAlGrupo = (id) => {
+        const cc = leerCuaderno();
+        const x = K.grupoDe(cc, id);
+        if (!x) { avisar('Ese grupo ya no está'); return; }
+        const r = recetaDe(x.recetaId) || { id: x.recetaId, nombre: nombreDeReceta(cc, x.recetaId), pasos: [] };
+        abrirGrupo(r, id, pintar);
+      };
+      // Pasar muestras a otro cuaderno (versión 113, lo pidió el usuario): la historia se queda aquí, allí
+      // nace un grupo limpio y cada uno lleva un botón para ir al otro
+      const pasarACuaderno = async () => {
+        const actual = ambitoDe(g);
+        let destinos = K.todosLosCuadernos(c).filter((k) => k.ambito.recetaId && !K.casa(g, k.ambito));
+        let elegido = destinos[0] || null;
+        const crear = !destinos.length;
+        const cuantas = h('input', { class: 'campo', type: 'text', inputmode: 'numeric', autocomplete: 'off',
+          value: g.muestras == null ? '' : String(g.muestras), placeholder: g.muestras == null ? 'Todas' : `Todas (${g.muestras})` });
+        const lista = h('div', { class: 'elegir-grupo' },
+          destinos.map((k) => h('label', { class: 'opcion-grupo' },
+            h('input', { type: 'radio', name: 'cuaderno-destino', checked: k === elegido, onchange: () => { elegido = k; } }),
+            h('span', {}, h('b', { text: `📓 ${k.ficha.nombre}` }), h('small', { text: `📋 ${nombreDeReceta(c, k.ambito.recetaId)}` })))),
+          h('label', { class: 'opcion-grupo' },
+            h('input', { type: 'radio', name: 'cuaderno-destino', checked: crear, onchange: () => { elegido = 'nuevo'; } }),
+            h('span', {}, h('b', { text: '＋ Un cuaderno nuevo…' }), h('small', { text: 'Con la receta del proceso que van a seguir' }))));
+        if (crear) elegido = 'nuevo';
+        const nota = await preguntar({ texto: `📤 Pasar «${g.nombre}» a otro cuaderno`, detalle: [
+          h('p', { class: 'dialogo-detalle', text: 'Las muestras siguen allí, en un grupo nuevo. Aquí se queda toda su historia, y cada grupo lleva un botón para ir al otro.' }),
+          lista,
+          h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Cuántas pasan' }), cuantas)],
+        campo: { placeholder: 'Nota (si quieres): por qué…', autocapitalize: 'sentences' }, si: 'Pasar', no: 'Cancelar' });
+        if (nota === null) return;
+        let destino = elegido;
+        if (destino === 'nuevo') {
+          const id = await editarFichaCuaderno(null, null);
+          if (!id || id === 'quitado') return;
+          const ficha = K.fichaCuaderno(leerCuaderno(), { cuadernoId: id });
+          if (!ficha.recetaId) { avisar('Ese cuaderno no tiene receta: ponle una con ✏️ y vuelve a pasar las muestras'); return; }
+          destino = { ambito: K.ambito(ficha.recetaId, id), ficha };
+        }
+        if (!destino) { avisar('Elige un cuaderno'); return; }
+        const cc = leerCuaderno();
+        // (con la receta: «Cuaderno 1» lo tiene cada receta, y si no se confunden)
+        const largo = (a, f) => { const rn = nombreDeReceta(cc, a.recetaId); return rn && rn !== f.nombre ? `${f.nombre} · ${rn}` : f.nombre; };
+        const d = { recetaId: destino.ambito.recetaId, cuadernoId: destino.ambito.cuadernoId,
+          nombre: largo(destino.ambito, destino.ficha), deNombre: largo(actual, K.fichaCuaderno(cc, actual)) };
+        const n = String(cuantas.value).trim() === '' ? null : Q.aNumero(cuantas.value);
+        let nuevoId = null;
+        try {
+          cambiarCuaderno((x) => {
+            const r = K.pasar(x, g.id, d, n, Date.now(), { grupo: idDe('g'), de: idDe('e'), a: idDe('e') });
+            nuevoId = r.nuevo.id;
+            const e1 = x.entradas.find((y) => y.tipo === 'pasar' && y.nuevoId === r.nuevo.id);
+            const e2 = x.entradas.find((y) => y.tipo === 'llegar' && y.grupoId === r.nuevo.id);
+            if (e1) { e1.receta = receta.nombre; if (nota.trim()) e1.nota = nota.trim(); }
+            if (e2) e2.receta = nombreDeReceta(x, d.recetaId);
+          });
+        } catch (e) { avisar(e.message); return; }
+        vibrar(30);
+        avisar(`📤 «${g.nombre}» pasa al cuaderno «${d.nombre}»`);
+        pintar();
+      };
       const separar = async () => {
         // El nombre que se propone: la primera letra que no tenga ya un grupo de esta receta
         const usados = new Set(K.gruposDe(c, ambitoDe(g)).map((x) => x.nombre));
@@ -3576,7 +3651,7 @@
           for (const e of d.entradas) {
             if (e.grupoId === x.id) e.grupo = x.nombre;
             if (e.nuevoId === x.id) e.nuevo = x.nombre;
-            if (e.tipo === 'recibir' && e.desdeId === x.id) e.desde = x.nombre;
+            if ((e.tipo === 'recibir' || e.tipo === 'llegar') && e.desdeId === x.id) e.desde = x.nombre;
           }
         });
         pintar();
@@ -3597,7 +3672,7 @@
         });
         pintar();
       };
-      const puedeTocar = fases.length > 0 && !g.juntadoEn && (est.estado === 'espera' || est.estado === 'nada') && est.siguiente !== undefined;
+      const puedeTocar = fases.length > 0 && !g.juntadoEn && !g.pasadoA && (est.estado === 'espera' || est.estado === 'nada') && est.siguiente !== undefined;
       const quitar = async () => {
         if (!await preguntar({ texto: `¿Quitar el grupo «${g.nombre}»?`, detalle: 'Lo apuntado en la bitácora se queda.', si: 'Quitar', peligro: true })) return;
         quitarGrupo(grupoId);
@@ -3612,10 +3687,18 @@
           g.muestras != null && h('p', { class: 'grupo-cuantas', text: muestrasTexto(g.muestras) }),
           h('p', { text: textoEstado(est) }),
           g.padre && h('small', { class: 'nota', text: `Salió de «${padre ? padre.nombre : 'un grupo quitado'}» el ${fechaCorta(g.desde)}` }),
+          // De otro cuaderno (pasar): su historia anterior no está aquí, está allí (botón)
+          g.vieneDe && h('small', { class: 'nota', text: `📥 Llegó del cuaderno «${g.vieneCuaderno || 'otro'}» el ${fechaCorta(g.vieneDesde)}. Su historia anterior está allí.` }),
+          g.vieneDe && h('button', { class: 'enlace', type: 'button', onclick: () => irAlGrupo(g.vieneDe),
+            text: `📜 Ver su historial anterior${K.grupoDe(c, g.vieneDe) ? '' : ' (ya no está)'}` }),
           puedeTocar && h('button', { class: 'enlace', type: 'button', onclick: ponerFecha,
             text: g.toca ? `📅 Le toca ${cuandoToca(g.toca)}: cambiar` : '📅 ¿Cuándo le toca? (para que te avise)' })),
-        // Juntado con otro: ya no sigue (solo notas); si no, todo lo que se puede hacer
-        g.juntadoEn
+        // Juntado con otro o pasado a otro cuaderno: ya no sigue (solo notas); si no, todo lo que se puede hacer
+        g.pasadoA
+          ? h('div', { class: 'acciones-grupo' },
+            h('button', { class: 'boton', text: `➡️ Seguir en «${est.cuaderno}»`, onclick: () => irAlGrupo(g.pasadoA) }),
+            h('button', { class: 'boton secundario', text: '📷 Nota o fotos', onclick: nota }))
+          : g.juntadoEn
           ? h('div', { class: 'acciones-grupo' },
             h('button', { class: 'boton secundario', text: `🔗 Ir a «${est.con}»`, onclick: () => cerrarCapas(1, () => abrirGrupo(receta, g.juntadoEn, alVolver)) }),
             h('button', { class: 'boton secundario', text: '📷 Nota o fotos', onclick: nota }))
@@ -3625,6 +3708,7 @@
             h('button', { class: 'boton secundario', text: '🔬 Muestra para analizar', onclick: analisis }),
             h('button', { class: 'boton secundario', text: '✂️ Separar muestras', onclick: separar }),
             h('button', { class: 'boton secundario', text: '🔗 Juntar con otro grupo', onclick: juntarCon }),
+            h('button', { class: 'boton secundario', text: '📤 Pasar a otro cuaderno', onclick: pasarACuaderno }),
             h('button', { class: 'boton secundario', text: '📷 Nota o fotos', onclick: nota })),
         h('h3', { text: '📖 Su historia' }),
         historia.length
