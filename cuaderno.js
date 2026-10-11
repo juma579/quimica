@@ -221,7 +221,7 @@
     if (!String(nombre || '').trim()) throw new Error('Ponle nombre al grupo nuevo');
     // (el grupo nuevo, en el mismo cuaderno y la misma carpeta)
     const mismo = { ...(g.cuadernoId ? { cuadernoId: g.cuadernoId } : {}) };
-    const nuevo = { id: ids.grupo, nombre: String(nombre).trim().slice(0, 60), recetaId: g.recetaId, ...mismo, ...(g.carpeta ? { carpeta: g.carpeta } : {}), muestras: n, padre: g.id, desde: ahora };
+    const nuevo = { id: ids.grupo, nombre: String(nombre).trim().slice(0, 60), recetaId: g.recetaId, ...mismo, ...(g.carpeta ? { carpeta: g.carpeta } : {}), ...(g.caracteristicas ? { caracteristicas: g.caracteristicas } : {}), muestras: n, padre: g.id, desde: ahora };
     const entrada = { id: ids.entrada, fecha: ahora, tipo: 'separar', recetaId: g.recetaId, ...mismo, grupoId: g.id, grupo: g.nombre, nuevoId: nuevo.id, nuevo: nuevo.nombre, cuantas: n };
     if (g.muestras != null) g.muestras -= n;
     c.grupos.push(nuevo);
@@ -333,7 +333,7 @@
     const todas = n == null || total == null || n >= total;
     const marca = marcaDe(ambito(destino.recetaId || null, destino.cuadernoId));
     const nuevo = { id: ids.grupo, nombre: g.nombre, recetaId: destino.recetaId || null, ...marca, muestras: n == null ? null : n,
-      vieneDe: g.id, vieneDesde: ahora, vieneCuaderno: destino.deNombre || '' };
+      vieneDe: g.id, vieneDesde: ahora, vieneCuaderno: destino.deNombre || '', ...(g.caracteristicas ? { caracteristicas: g.caracteristicas } : {}) };
     const origen = { recetaId: g.recetaId, ...(g.cuadernoId ? { cuadernoId: g.cuadernoId } : {}) };
     const e1 = { id: ids.de, fecha: ahora, tipo: 'pasar', ...origen, grupoId: g.id, grupo: g.nombre, nuevoId: nuevo.id, nuevo: nuevo.nombre,
       haciaCuaderno: destino.nombre || '', ...(n != null ? { cuantas: n } : {}) };

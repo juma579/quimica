@@ -611,6 +611,7 @@ small.aviso-sentido[hidden] { display: none; }
 .informe-color { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; vertical-align: baseline; }
 .informe-hitos { margin: 6px 0; font-size: 13px; }
 .informe-hitos ul { margin: 2px 0 0; padding-left: 18px; }
+.informe-caract p { margin: 2px 0 0; white-space: pre-wrap; }
 .informe-arbol svg { max-width: 100%; height: auto; }
 .informe-arbol .arbol-caja { overflow: visible; }
 .informe-disolucion { margin-bottom: 10px; break-inside: avoid; }
@@ -707,3 +708,18 @@ small.aviso-sentido[hidden] { display: none; }
 /* Las pestañas del cuaderno (versión 116): tres, así que más estrechas */
 .pestanas-cuaderno .pestana-receta { font-size: 14px; padding: 10px 4px; }
 .fotos-embebidas { min-height: 120px; }
+
+/* La foto de un cuaderno: un recuadro pequeño a la derecha de su tarjeta (versión 121) */
+.cuaderno-tarjeta.con-foto { position: relative; padding-right: 100px; min-height: 92px; }
+.cuaderno-foto { position: absolute; top: 12px; right: 12px; width: 76px; height: 76px; border-radius: 10px; overflow: hidden; background: var(--color-suave); border: 1px solid var(--borde); }
+.cuaderno-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.foto-cuaderno-ficha { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.foto-cuaderno-ficha img { width: 84px; height: 84px; object-fit: cover; border-radius: 10px; border: 1px solid var(--borde); }
+.foto-cuaderno-botones { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+
+/* La receta dentro del informe (versión 121) */
+.informe-receta h3 { margin: 12px 0 4px; font-size: 15px; }
+.informe-receta p { margin: 4px 0; }
+.informe-paso { margin: 6px 0; }
+.informe-fase { margin: 12px 0 2px; font-weight: 700; }
+.informe-subfase { margin: 6px 0 0; font-size: 12px; font-style: italic; }

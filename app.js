@@ -2342,6 +2342,12 @@
   // Crear un cuaderno (k null) o cambiar uno: nombre, con qué receta va (o ninguna) y una nota.
   // recetaInicial: la que se propone al crear. Devuelve su id, 'quitado', o null si se cancela.
   // El Cuaderno 1 de una receta no cambia de receta; uno vacío (que no sea ese) se puede quitar
+  // Una foto del almacén de fotos, para ponerla donde sea (usa urlDe, que ya la guarda en memoria)
+  const imagenFoto = (id) => {
+    const img = h('img', { alt: '' });
+    urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
+    return img;
+  };
   const editarFichaCuaderno = async (k, recetaInicial) => {
     const c = leerCuaderno();
     const esPrincipal = Boolean(k && k.recetaId && k.id === K.principal(k.recetaId));
@@ -2353,8 +2359,36 @@
       h('option', { value: '', text: 'Sin receta (solo notas)', selected: actual === '' }),
       recetas.map((r) => h('option', { value: r.id, text: r.nombre, selected: r.id === actual })));
     const nota = h('textarea', { class: 'campo', rows: 2, autocapitalize: 'sentences', value: k ? k.nota || '' : '', placeholder: 'De qué va (si quieres): qué cambia en este experimento…' });
+    // La foto del cuaderno (versión 121, lo pidió el usuario): un recuadro a la derecha en la lista de
+    // cuadernos. Se guarda como cualquier foto (así pasa también al PC) y su id va en la ficha (`foto`)
+    let foto = k ? k.foto || null : null;
+    const fotoDeAntes = foto;
+    const subidas = [];
+    const vistaFoto = h('div', { class: 'foto-cuaderno-ficha' });
+    const archivoFoto = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async () => {
+      const a = archivoFoto.files && archivoFoto.files[0];
+      archivoFoto.value = '';
+      if (!a) return;
+      try {
+        const f = await window.Fotos.convertir(a);
+        await window.Fotos.guardar(f);
+        subidas.push(f.id);
+        foto = f.id;
+        pintarFoto();
+      } catch { avisar('No se ha podido leer esa foto'); }
+    } });
+    const pintarFoto = () => {
+      poner(vistaFoto,
+        foto ? imagenFoto(foto) : h('small', { class: 'nota', text: 'Sin foto' }),
+        h('div', { class: 'foto-cuaderno-botones' },
+          h('button', { class: 'boton secundario', type: 'button', text: foto ? '📷 Cambiar la foto' : '📷 Poner una foto', onclick: () => archivoFoto.click() }),
+          foto && h('button', { class: 'boton discreto', type: 'button', text: 'Quitar', onclick: () => { foto = null; pintarFoto(); } })));
+    };
+    pintarFoto();
+    const soltarSubidas = (conservar) => { for (const id of subidas) if (id !== conservar) window.Fotos.borrar(id).catch(() => {}); };
     const r = await preguntar({ texto: k ? '📓 Cambiar el cuaderno' : '📓 Nuevo cuaderno', detalle: [
       h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Nombre' }), nombre),
+      h('div', { class: 'etiqueta-campo' }, h('span', { text: 'Foto (se ve a la derecha en la lista de cuadernos)' }), vistaFoto, archivoFoto),
       h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Va con la receta' }), receta),
       esPrincipal && h('p', { class: 'dialogo-detalle', text: 'Es el cuaderno de siempre de esta receta: su receta no se cambia.' }),
       h('label', { class: 'etiqueta-campo' }, h('span', { text: 'De qué va' }), nota),
@@ -2362,13 +2396,15 @@
     si: k ? 'Guardar' : 'Crear', no: 'Cancelar', otro: k && !esPrincipal && !tieneAlgo ? '🗑️ Quitar este cuaderno (está vacío)' : null });
     if (r === 'otro') {
       cambiarCuaderno((d) => { d.cuadernos = d.cuadernos.filter((x) => x.id !== k.id); });
+      soltarSubidas(null);
+      if (fotoDeAntes) window.Fotos.borrar(fotoDeAntes).catch(() => {});
       return 'quitado';
     }
-    if (!r || !nombre.value.trim()) return null;
+    if (!r || !nombre.value.trim()) { soltarSubidas(fotoDeAntes); return null; }
     const nuevaReceta = esPrincipal ? k.recetaId : receta.value || null;
     const cambiaReceta = k && !esPrincipal && (k.recetaId || null) !== nuevaReceta;
     if (cambiaReceta && c.grupos.some((g) => K.casa(g, amb))
-      && !await preguntar({ texto: '¿Cambiar la receta del cuaderno?', detalle: 'Sus grupos de muestras siguen las fases de la receta: con otra, sus fases pueden no cuadrar.', si: 'Cambiar', no: 'Cancelar' })) return null;
+      && !await preguntar({ texto: '¿Cambiar la receta del cuaderno?', detalle: 'Sus grupos de muestras siguen las fases de la receta: con otra, sus fases pueden no cuadrar.', si: 'Cambiar', no: 'Cancelar' })) { soltarSubidas(fotoDeAntes); return null; }
     const id = k ? k.id : idDe('n');
     cambiarCuaderno((d) => {
       let x = d.cuadernos.find((y) => y.id === id);
@@ -2376,6 +2412,7 @@
       if (!x) { x = { id, recetaId: k ? k.recetaId : nuevaReceta, fecha: k ? 0 : Date.now() }; d.cuadernos.push(x); }
       x.nombre = nombre.value.trim().slice(0, 60);
       x.nota = nota.value.trim();
+      if (foto) x.foto = foto; else delete x.foto;
       if (cambiaReceta) {
         // Lo suyo pasa a ser de esa receta
         x.recetaId = nuevaReceta;
@@ -2386,6 +2423,9 @@
         }
       }
     });
+    // (las fotos que ya no se usan: las subidas y cambiadas aquí, y la de antes si se quitó o se cambió)
+    soltarSubidas(foto);
+    if (fotoDeAntes && fotoDeAntes !== foto) window.Fotos.borrar(fotoDeAntes).catch(() => {});
     return id;
   };
 
@@ -2425,7 +2465,8 @@
       oninput: (e) => { busquedaGlobal = e.target.value; verBusqueda(); } });
     // Arriba, lo que les toca hoy o mañana a los grupos (o ya se pasó)
     poner(tarjetas, lista.length
-      ? lista.map((x) => h('button', { class: 'tarjeta cuaderno-tarjeta', onclick: () => abrirCuadernoDe(x.ambito.cuadernoId, x.ambito.recetaId, pintarCuadernos) },
+      ? lista.map((x) => h('button', { class: `tarjeta cuaderno-tarjeta${x.ficha.foto ? ' con-foto' : ''}`, onclick: () => abrirCuadernoDe(x.ambito.cuadernoId, x.ambito.recetaId, pintarCuadernos) },
+        x.ficha.foto && h('div', { class: 'cuaderno-foto' }, imagenFoto(x.ficha.foto)),
         h('h3', { text: `📓 ${x.ficha.nombre}` }),
         h('p', { text: x.ambito.recetaId ? `📋 ${nombreDeReceta(c, x.ambito.recetaId)}` : 'Sin receta (solo notas)' }),
         h('p', { class: 'meta', text: [x.grupos && `🧫 ${x.grupos} ${x.grupos === 1 ? 'grupo' : 'grupos'}`, x.entradas && `📖 ${x.entradas} ${x.entradas === 1 ? 'apunte' : 'apuntes'}`, x.ultima && `último: ${fechaCorta(x.ultima)}`].filter(Boolean).join(' · ') || 'Nada apuntado todavía' })))
@@ -2684,7 +2725,41 @@
     return el;
   };
   const COLORES_GRUPO = ['#3949ab', '#e53935', '#00897b', '#f9a825', '#8e24aa', '#6d4c41', '#039be5', '#7cb342', '#d81b60', '#546e7a'];
-  const arbolDeMuestras = (c, receta, abrir, amb = ambitoActual(receta)) => {
+  // El color de un grupo que llegó de otro cuaderno es el que tenía allí (lo pidió el usuario: «no se
+  // pasaron los colores»); prof corta las cadenas largas. Sin árbol (cuaderno sin fases), los grupos
+  // llevan color igual (coloresSinArbol)
+  const colorHeredado = (c, g, prof) => {
+    const o = g.vieneDe && prof < 4 ? K.grupoDe(c, g.vieneDe) : null;
+    if (!o) return null;
+    const receta = recetaDe(o.recetaId) || { id: o.recetaId || null, nombre: '', pasos: [], datos: [], calculos: [] };
+    const a = arbolDeMuestras(c, receta, () => {}, ambitoDe(o), prof + 1);
+    return (a ? a.colores : coloresSinArbol(c, ambitoDe(o), prof + 1)).get(o.id) || null;
+  };
+  // Los colores en el orden de siempre; los que llegaron de otro cuaderno, con el suyo, y a los demás
+  // se les da el primero de la paleta que no esté ya en uso
+  const asignarColores = (c, lista, prof) => {
+    const mapa = new Map();
+    for (const g of lista) { const k = colorHeredado(c, g, prof); if (k) mapa.set(g.id, k); }
+    const usados = new Set(mapa.values());
+    let i = 0;
+    for (const g of lista) {
+      if (mapa.has(g.id)) { i++; continue; }
+      const libres = COLORES_GRUPO.filter((k) => !usados.has(k));
+      const k = libres.length ? libres[0] : COLORES_GRUPO[i % COLORES_GRUPO.length];
+      usados.add(k);
+      mapa.set(g.id, k);
+      i++;
+    }
+    return mapa;
+  };
+  const coloresSinArbol = (c, amb, prof = 0) => {
+    const carpetas = K.carpetasDe(c, amb);
+    const lista = carpetas.length
+      ? [...carpetas.flatMap((k) => K.gruposEnCarpeta(c, amb, k.id)), ...K.gruposEnCarpeta(c, amb, null)]
+      : K.gruposDe(c, amb);
+    return asignarColores(c, lista, prof);
+  };
+  const arbolDeMuestras = (c, receta, abrir, amb = ambitoActual(receta), prof = 0) => {
     const r = recetaDe(receta.id);
     const fases = fasesDe(r);
     const ultimas = r ? Q.ultimasDeMuestras(r) : {};
@@ -2815,7 +2890,7 @@
       const recorrer = (g) => { porFecha.push(g); for (const x2 of hijosEn(g.id, p.grupos)) recorrer(x2); };
       for (const g of p.grupos.filter((g2) => !g2.padre || !suyos.has(g2.padre))) recorrer(g);
     }
-    const colores = new Map(porFecha.map((g) => [g.id, COLORES_GRUPO[n++ % COLORES_GRUPO.length]]));
+    const colores = asignarColores(c, porFecha, prof);
     // Por dónde va la línea de cada grupo: si ha vuelto atrás a repetir fases, después de cada vuelta
     // sigue por una línea nueva a su derecha (lo pidió el usuario: «la línea roja debería seguir
     // recto»). xEn(t): en qué x va su línea en el momento t (ahí salen ramas, trozos y el final)
@@ -3116,13 +3191,37 @@
   // en un documento ordenado», para la memoria o para el tutor) ───
   // Se ve en la app y se guarda como PDF con «🖨️» (en Android, con el plugin Imprimir; en el PC y en
   // el iPhone, con la impresión del navegador). Devuelve { el, listo } (listo: cuando ya están las fotos)
-  const informeDe = (c, receta, amb, ficha, { conFotos, conAnterior = true }) => {
+  const informeDe = (c, receta, amb, ficha, { conFotos, conAnterior = true, conReceta = true }) => {
     const esperas = [];
+    // La receta, copiada (versión 121, lo pidió el usuario): sus datos y cantidades con los números de
+    // ahora, y los pasos con esas cantidades puestas
+    const rec = conReceta && receta && receta.id ? recetaDe(receta.id) : null;
+    const seccionReceta = () => {
+      if (!rec) return null;
+      const res = Q.calcular(rec);
+      const valorDe = (x) => (x.id in res.valores ? Q.cantidad(res.valores[x.id], x.unidad) : '—');
+      return h('section', { class: 'informe-receta' },
+        h('h2', { text: `📋 La receta: ${rec.nombre}` }),
+        rec.resumen && h('p', { text: rec.resumen }),
+        rec.seguridad && h('p', { text: `⚠️ Seguridad: ${rec.seguridad}` }),
+        rec.notas && h('p', { text: `📝 ${rec.notas.split('\n').filter(Boolean).join(' · ')}` }),
+        rec.datos.length > 0 && [h('h3', { text: 'Datos' }),
+          h('table', { class: 'informe-tabla' }, h('tbody', {}, rec.datos.map((d) => h('tr', {}, h('td', { text: d.nombre }), h('td', { class: 'informe-numero', text: valorDe(d) })))))],
+        rec.calculos.length > 0 && [h('h3', { text: 'Cantidades calculadas' }),
+          h('table', { class: 'informe-tabla' }, h('tbody', {}, rec.calculos.map((x) => h('tr', {}, h('td', { text: x.nombre }), h('td', { class: 'informe-numero', text: valorDe(x) })))))],
+        rec.pasos.length > 0 && [h('h3', { text: 'Pasos' }),
+          rec.pasos.map((p, i) => [
+            p.titulo && h('p', { class: 'informe-fase', text: p.titulo }),
+            p.subfase && h('p', { class: 'informe-subfase', text: `${p.parte === 'disolucion' ? '🧪' : '🧫'} ${p.subfase}` }),
+            h('p', { class: 'informe-paso' }, h('b', { text: `${i + 1}. ` }), Q.trozosPaso(p.texto, rec, res).map((t) => t.texto).join(''),
+              p.minutos ? ` ⏲️ ${Q.duracion(p.minutos)}` : '', p.ciclos ? ` 🔁 ${p.ciclos} ciclos` : '')])]);
+    };
     const grupos = receta ? K.gruposDe(c, amb) : [];
     const entradas = c.entradas.filter((e) => K.casa(e, amb)).map((e) => conNombresDeAhora(c, e)).sort((a, b) => a.fecha - b.fecha);
     const disoluciones = receta ? [...K.disolucionesDe(c, amb)].sort((a, b) => a.fecha - b.fecha) : [];
     const arbol = receta && grupos.length ? arbolDeMuestras(c, receta, () => {}, amb) : null;
-    const colorDe = (id) => (arbol && arbol.colores.get(id)) || null;
+    const coloresInforme = arbol ? arbol.colores : (receta && grupos.length ? coloresSinArbol(c, amb) : new Map());
+    const colorDe = (id) => coloresInforme.get(id) || null;
     const fechaLarga = (ms) => new Date(ms).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
     let nFoto = 0;
     const foto = (e, id) => {
@@ -3156,6 +3255,7 @@
         h('p', { text: receta && receta.id ? `Receta: ${receta.nombre}` : 'Sin receta todavía' }),
         ficha.nota && h('p', { class: 'informe-nota', text: ficha.nota }),
         h('p', { class: 'informe-meta', text: [`Informe del ${fechaLarga(Date.now())}`, entradas.length && `${entradas.length} apuntes, del ${fechaLarga(entradas[0].fecha)} al ${fechaLarga(entradas[entradas.length - 1].fecha)}`].filter(Boolean).join(' · ') })),
+      seccionReceta(),
       arbol && [h('h2', { text: '🌳 Cómo van las muestras' }), (() => {
         const caja = arbol.querySelector('.arbol-caja');
         const leyenda = arbol.querySelector('.arbol-leyenda');
@@ -3176,7 +3276,8 @@
           const lista = hitos(g);
           // Lo que le pasó en otros cuadernos antes de llegar aquí (versión 114)
           const antes = conAnterior && g.vieneDe ? K.historiaAnterior(c, g.id) : [];
-          return [lista.length > 0 && h('div', { class: 'informe-hitos' }, h('b', { text: g.nombre }), h('ul', {}, lista.map((t) => h('li', { text: t })))),
+          return [g.caracteristicas && h('div', { class: 'informe-hitos informe-caract' }, h('b', { text: `${g.nombre} · características` }), h('p', { text: g.caracteristicas })),
+            lista.length > 0 && h('div', { class: 'informe-hitos' }, h('b', { text: g.nombre }), h('ul', {}, lista.map((t) => h('li', { text: t })))),
             antes.map((tr) => h('div', { class: 'informe-hitos informe-antes' },
               h('b', { text: `${g.nombre} · antes, en el cuaderno «${tr.cuaderno}» (como «${tr.grupo}»)` }),
               h('ul', {}, tr.entradas.filter((e) => e.tipo !== 'comparar').map((e) => h('li', { text: `${fechaCorta(e.fecha)}: ${K.titularDe(conNombresDeAhora(c, e))}${e.distinto ? ` — ⚠️ ${e.distinto}` : ''}${e.nota ? ` — ${e.nota}` : ''}` })))))];
@@ -3245,8 +3346,10 @@
     });
     let conFotos = true;
     let conAnterior = true;
+    let conReceta = true;
     let actual = null;
     const hoja = h('div', { class: 'informe-hoja' });
+    const hayReceta = Boolean(receta && receta.id && recetaDe(receta.id));
     const hayAnterior = K.gruposDe(leerCuaderno(), amb).some((g) => g.vieneDe);
     const boton = h('button', { class: 'boton', text: '🖨️ Guardar como PDF o imprimir', onclick: async () => {
       if (!actual) return;
@@ -3256,12 +3359,13 @@
       imprimirInforme(actual.el, `Informe ${ficha.nombre}`);
     } });
     const pintar = () => {
-      actual = informeDe(leerCuaderno(), receta, amb, ficha, { conFotos, conAnterior });
+      actual = informeDe(leerCuaderno(), receta, amb, ficha, { conFotos, conAnterior, conReceta });
       poner(hoja, actual.el);
     };
     poner(cuerpo,
       h('p', { class: 'nota', text: 'Toda la historia del cuaderno, ordenada. Con «Guardar como PDF» eliges «Guardar como PDF» (o una impresora) en el cuadro que sale.' }),
       h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conFotos = e.target.checked; pintar(); } }), ' Con las fotos'),
+      hayReceta && h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conReceta = e.target.checked; pintar(); } }), ' Con la receta copiada'),
       hayAnterior && h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conAnterior = e.target.checked; pintar(); } }), ' Con la historia de antes (de otros cuadernos)'),
       boton,
       hoja);
@@ -3511,7 +3615,8 @@
             // cambian de sitio y de carpeta manteniendo pulsado y arrastrando
             const carpetas = K.carpetasDe(c, amb);
             // Cada grupo, con el color de su línea en el árbol
-            const colorDe = (g) => arbol && arbol.colores.get(g.id);
+            const coloresGrupos = arbol ? arbol.colores : coloresSinArbol(c, amb);
+            const colorDe = (g) => coloresGrupos.get(g.id);
             const tarjeta = (g) => h('button', { class: `tarjeta grupo${colorDe(g) ? ' con-color' : ''}`, 'data-id': g.id, style: colorDe(g) ? `--gc: ${colorDe(g)}` : null, onclick: () => abrirGrupo(receta, g.id, pintar) },
               h('h3', {}, g.nombre, g.muestras != null && h('small', { class: 'grupo-muestras', text: ` · ${muestrasTexto(g.muestras)}` })),
               h('p', { text: textoEstado(estadoGrupo(c, g)) }),
@@ -3888,6 +3993,25 @@
       const historia = K.historiaDe(c, g.id);
       const padre = g.padre && K.grupoDe(c, g.padre);
       const hayFases = fases.length > 0;
+      // Las características de la muestra (versión 120, lo pidió el usuario): un texto del grupo que no
+      // va en la bitácora sino en el informe. Se guarda solo
+      const caract = h('textarea', { class: 'campo', rows: 3, autocapitalize: 'sentences', value: g.caracteristicas || '',
+        placeholder: 'Por ejemplo: fibra de 4 cm, 2 capas de grafeno, pH 8,4, tintada 3 veces…' });
+      const estadoCaract = h('small', { class: 'notas-estado', text: '' });
+      let relojCaract = null;
+      const guardarCaract = () => {
+        clearTimeout(relojCaract);
+        relojCaract = null;
+        const texto = caract.value.trim();
+        cambiarCuaderno((d) => {
+          const x = K.grupoDe(d, grupoId);
+          if (!x) return;
+          if (texto) x.caracteristicas = texto; else delete x.caracteristicas;
+        });
+        estadoCaract.textContent = '✓ Guardado';
+      };
+      caract.addEventListener('input', () => { estadoCaract.textContent = 'Guardando…'; clearTimeout(relojCaract); relojCaract = setTimeout(guardarCaract, 700); });
+      caract.addEventListener('blur', () => { if (relojCaract) guardarCaract(); });
       poner(cuerpo,
         h('div', { class: 'caja grupo-estado' },
           g.muestras != null && h('p', { class: 'grupo-cuantas', text: muestrasTexto(g.muestras) }),
@@ -3899,6 +4023,7 @@
             text: `📜 Ver su historial anterior${K.grupoDe(c, g.vieneDe) ? '' : ' (ya no está)'}` }),
           puedeTocar && h('button', { class: 'enlace', type: 'button', onclick: ponerFecha,
             text: g.toca ? `📅 Le toca ${cuandoToca(g.toca)}: cambiar` : '📅 ¿Cuándo le toca? (para que te avise)' })),
+        h('label', { class: 'etiqueta-campo caracteristicas' }, h('span', { text: '📝 Características de esta muestra (solo salen en el informe, no en la bitácora)' }), caract, estadoCaract),
         // Juntado con otro o pasado a otro cuaderno: ya no sigue (solo notas); si no, todo lo que se puede hacer
         g.pasadoA
           ? h('div', { class: 'acciones-grupo' },
@@ -4086,7 +4211,7 @@
       (detalles || enSesion) && h('small', { text: detalles || 'Sin aumento' }));
   };
   // El color de cada grupo (el de su línea en el árbol): Map id → color (vacío sin árbol)
-  const coloresDe = (c, receta, amb) => { const a = arbolDeMuestras(c, receta, () => {}, amb); return a ? a.colores : new Map(); };
+  const coloresDe = (c, receta, amb) => { const a = arbolDeMuestras(c, receta, () => {}, amb); return a ? a.colores : coloresSinArbol(c, amb); };
   // Los tipos de apunte con fotos, para filtrar (K.tipoFoto)
   const TIPOS_FOTO = [['analisis', '🔬 Análisis'], ['fases', '🧫 Fases'], ['disoluciones', '🧪 Disoluciones'], ['notas', '✍️ Notas']];
 
