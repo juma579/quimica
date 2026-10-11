@@ -321,21 +321,23 @@
   const pasar = (c, grupoId, destino, cuantas, ahora, ids) => {
     const g = grupoDe(c, grupoId);
     if (!g) throw new Error('Ese grupo ya no está');
-    if (!destino || !destino.recetaId) throw new Error('Elige un cuaderno con receta: es donde van a seguir');
-    if (casa(g, ambito(destino.recetaId, destino.cuadernoId))) throw new Error('Elige otro cuaderno: ese es el de ahora');
+    // (un cuaderno sin receta todavía vale: sus grupos son suyos por el cuaderno, y cuando se le pone
+    // receta, pasan a ser de ella solos)
+    if (!destino || (!destino.recetaId && !destino.cuadernoId)) throw new Error('Elige a qué cuaderno pasan');
+    if (casa(g, ambito(destino.recetaId || null, destino.cuadernoId))) throw new Error('Elige otro cuaderno: ese es el de ahora');
     if (g.pasadoA || g.juntadoEn) throw new Error('Este grupo ya no sigue aquí');
     const total = g.muestras;
     const n = cuantas == null || cuantas === '' ? total : Math.round(Number(cuantas));
     if (n != null && !(n >= 1)) throw new Error('Pon cuántas muestras pasan (al menos una)');
     if (n != null && total != null && n > total) throw new Error(`El grupo tiene ${total}: no pueden pasar ${n}`);
     const todas = n == null || total == null || n >= total;
-    const marca = marcaDe(ambito(destino.recetaId, destino.cuadernoId));
-    const nuevo = { id: ids.grupo, nombre: g.nombre, recetaId: destino.recetaId, ...marca, muestras: n == null ? null : n,
+    const marca = marcaDe(ambito(destino.recetaId || null, destino.cuadernoId));
+    const nuevo = { id: ids.grupo, nombre: g.nombre, recetaId: destino.recetaId || null, ...marca, muestras: n == null ? null : n,
       vieneDe: g.id, vieneDesde: ahora, vieneCuaderno: destino.deNombre || '' };
     const origen = { recetaId: g.recetaId, ...(g.cuadernoId ? { cuadernoId: g.cuadernoId } : {}) };
     const e1 = { id: ids.de, fecha: ahora, tipo: 'pasar', ...origen, grupoId: g.id, grupo: g.nombre, nuevoId: nuevo.id, nuevo: nuevo.nombre,
       haciaCuaderno: destino.nombre || '', ...(n != null ? { cuantas: n } : {}) };
-    const e2 = { id: ids.a, fecha: ahora, tipo: 'llegar', recetaId: destino.recetaId, ...marca, grupoId: nuevo.id, grupo: nuevo.nombre, desdeId: g.id, desde: g.nombre,
+    const e2 = { id: ids.a, fecha: ahora, tipo: 'llegar', recetaId: destino.recetaId || null, ...marca, grupoId: nuevo.id, grupo: nuevo.nombre, desdeId: g.id, desde: g.nombre,
       deCuaderno: destino.deNombre || '', ...(n != null ? { cuantas: n } : {}) };
     if (todas) {
       g.pasadoA = nuevo.id;

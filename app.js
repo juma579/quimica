@@ -3320,8 +3320,18 @@
       // Sin receta: notas (con fotos) y la bitácora
       if (!receta) {
         const notas = c.entradas.filter((e) => K.casa(e, amb));
+        // Muestras que han llegado de otro cuaderno y esperan su receta (versión 115)
+        const esperan = K.gruposDe(c, amb);
+        const sinReceta = { id: null, nombre: ficha.nombre, pasos: [] };
         poner(cuerpo, cabecera,
-          h('p', { class: 'nota', text: 'Ponle una receta con ✏️ para tener grupos de muestras, fases, disoluciones y el árbol. Mientras, puedes apuntar notas y fotos, y escribir en «📝 Notas» (a la derecha).' }),
+          esperan.length > 0 && [h('h3', { text: '🧫 Muestras que esperan su receta' }),
+            h('p', { class: 'nota', text: 'Han llegado de otro cuaderno. Ponle una receta a este cuaderno y seguirán sus fases desde el principio.' }),
+            h('button', { class: 'boton', type: 'button', text: '📋 Ponerle receta a este cuaderno', onclick: editarEste }),
+            h('div', { class: 'lista-grupos' }, esperan.map((g) => h('button', { class: 'tarjeta grupo', 'data-id': g.id, onclick: () => abrirGrupo(sinReceta, g.id, pintar) },
+              h('h3', {}, g.nombre, g.muestras != null && h('small', { class: 'grupo-muestras', text: ` · ${muestrasTexto(g.muestras)}` })),
+              h('p', { text: textoEstado(estadoGrupo(c, g)) }),
+              g.vieneDe && h('small', { class: 'nota', text: `📥 Viene del cuaderno «${g.vieneCuaderno || 'otro'}»` }))))],
+          !esperan.length && h('p', { class: 'nota', text: 'Ponle una receta con ✏️ para tener grupos de muestras, fases, disoluciones y el árbol. Mientras, puedes apuntar notas y fotos, y escribir en «📝 Notas» (a la derecha).' }),
           h('h3', { text: '📖 Bitácora' }),
           h('button', { class: 'boton secundario', text: '✍️ Apuntar una nota', onclick: async () => {
             const r = await pedirApunte({ texto: `✍️ Nota · ${ficha.nombre}` });
@@ -3669,14 +3679,17 @@
         const cc = leerCuaderno();
         const x = K.grupoDe(cc, id);
         if (!x) { avisar('Ese grupo ya no está'); return; }
-        const r = recetaDe(x.recetaId) || { id: x.recetaId, nombre: nombreDeReceta(cc, x.recetaId), pasos: [] };
+        // (un grupo de un cuaderno sin receta todavía: la «receta» es solo un nombre para la pantalla)
+        const r = recetaDe(x.recetaId) || { id: x.recetaId || null,
+          nombre: x.recetaId ? nombreDeReceta(cc, x.recetaId) : K.fichaCuaderno(cc, K.ambito(null, K.cuadernoDe(x))).nombre, pasos: [] };
         abrirGrupo(r, id, pintar);
       };
       // Pasar muestras a otro cuaderno (versión 113, lo pidió el usuario): la historia se queda aquí, allí
       // nace un grupo limpio y cada uno lleva un botón para ir al otro
       const pasarACuaderno = async () => {
         const actual = ambitoDe(g);
-        let destinos = K.todosLosCuadernos(c).filter((k) => k.ambito.recetaId && !K.casa(g, k.ambito));
+        // (también los que aún no tienen receta: las muestras esperan allí y, al ponérsela, siguen sus fases)
+        let destinos = K.todosLosCuadernos(c).filter((k) => !K.casa(g, k.ambito));
         let elegido = destinos[0] || null;
         const crear = !destinos.length;
         const cuantas = h('input', { class: 'campo', type: 'text', inputmode: 'numeric', autocomplete: 'off',
@@ -3684,10 +3697,10 @@
         const lista = h('div', { class: 'elegir-grupo' },
           destinos.map((k) => h('label', { class: 'opcion-grupo' },
             h('input', { type: 'radio', name: 'cuaderno-destino', checked: k === elegido, onchange: () => { elegido = k; } }),
-            h('span', {}, h('b', { text: `📓 ${k.ficha.nombre}` }), h('small', { text: `📋 ${nombreDeReceta(c, k.ambito.recetaId)}` })))),
+            h('span', {}, h('b', { text: `📓 ${k.ficha.nombre}` }), h('small', { text: k.ambito.recetaId ? `📋 ${nombreDeReceta(c, k.ambito.recetaId)}` : '📋 Sin receta todavía (las muestras esperan allí)' })))),
           h('label', { class: 'opcion-grupo' },
             h('input', { type: 'radio', name: 'cuaderno-destino', checked: crear, onchange: () => { elegido = 'nuevo'; } }),
-            h('span', {}, h('b', { text: '＋ Un cuaderno nuevo…' }), h('small', { text: 'Con la receta del proceso que van a seguir' }))));
+            h('span', {}, h('b', { text: '＋ Un cuaderno nuevo…' }), h('small', { text: 'La receta se le puede poner ahora o después' }))));
         if (crear) elegido = 'nuevo';
         const nota = await preguntar({ texto: `📤 Pasar «${g.nombre}» a otro cuaderno`, detalle: [
           h('p', { class: 'dialogo-detalle', text: 'Las muestras siguen allí, en un grupo nuevo. Aquí se queda toda su historia, y cada grupo lleva un botón para ir al otro.' }),
@@ -3700,13 +3713,12 @@
           const id = await editarFichaCuaderno(null, null);
           if (!id || id === 'quitado') return;
           const ficha = K.fichaCuaderno(leerCuaderno(), { cuadernoId: id });
-          if (!ficha.recetaId) { avisar('Ese cuaderno no tiene receta: ponle una con ✏️ y vuelve a pasar las muestras'); return; }
-          destino = { ambito: K.ambito(ficha.recetaId, id), ficha };
+          destino = { ambito: K.ambito(ficha.recetaId || null, id), ficha };
         }
         if (!destino) { avisar('Elige un cuaderno'); return; }
         const cc = leerCuaderno();
         // (con la receta: «Cuaderno 1» lo tiene cada receta, y si no se confunden)
-        const largo = (a, f) => { const rn = nombreDeReceta(cc, a.recetaId); return rn && rn !== f.nombre ? `${f.nombre} · ${rn}` : f.nombre; };
+        const largo = (a, f) => { const rn = a.recetaId ? nombreDeReceta(cc, a.recetaId) : ''; return rn && rn !== f.nombre ? `${f.nombre} · ${rn}` : f.nombre; };
         const d = { recetaId: destino.ambito.recetaId, cuadernoId: destino.ambito.cuadernoId,
           nombre: largo(destino.ambito, destino.ficha), deNombre: largo(actual, K.fichaCuaderno(cc, actual)) };
         const n = String(cuantas.value).trim() === '' ? null : Q.aNumero(cuantas.value);
@@ -3718,7 +3730,7 @@
             const e1 = x.entradas.find((y) => y.tipo === 'pasar' && y.nuevoId === r.nuevo.id);
             const e2 = x.entradas.find((y) => y.tipo === 'llegar' && y.grupoId === r.nuevo.id);
             if (e1) { e1.receta = receta.nombre; if (nota.trim()) e1.nota = nota.trim(); }
-            if (e2) e2.receta = nombreDeReceta(x, d.recetaId);
+            if (e2) e2.receta = d.recetaId ? nombreDeReceta(x, d.recetaId) : null;
           });
         } catch (e) { avisar(e.message); return; }
         vibrar(30);
