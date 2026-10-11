@@ -3294,6 +3294,46 @@
       return [buscador, caja];
     };
     panel.append(h('button', { class: 'pestana-notas', 'aria-label': 'Notas del cuaderno', onclick: () => abrirNotas(cid, recetaIdInicial) }, h('span', { text: '📝 Notas' })));
+    // ── Pestañas (versión 116): «📖 Bitácora» a la izquierda, «🧫 Muestras» (la principal, con las
+    // disoluciones) en el medio y «🖼️ Fotos» a la derecha. Se cambia con ellas o deslizando el dedo; cada
+    // una recuerda por dónde iba, y la elegida se recuerda por cuaderno (quimica.pagina-cuaderno)
+    const PAGINAS = ['bitacora', 'muestras', 'fotos'];
+    const recordadaC = leer('quimica.pagina-cuaderno', {})[cid];
+    let paginaCuaderno = PAGINAS.includes(recordadaC) ? recordadaC : 'muestras';
+    const alturasC = { bitacora: 0, muestras: 0, fotos: 0 };
+    let fotosCaja = null; // { clave, el, listo }: la pantalla de fotos de la pestaña
+    let mostrarFotos = () => {};
+    const irPaginaCuaderno = (nombre) => {
+      if (nombre === paginaCuaderno || !PAGINAS.includes(nombre)) return;
+      alturasC[paginaCuaderno] = cuerpo.scrollTop;
+      const hacia = PAGINAS.indexOf(nombre) > PAGINAS.indexOf(paginaCuaderno) ? 'entra-der' : 'entra-izq';
+      paginaCuaderno = nombre;
+      guardar('quimica.pagina-cuaderno', { ...leer('quimica.pagina-cuaderno', {}), [cid]: nombre });
+      if (nombre === 'fotos') mostrarFotos();
+      for (const p of cuerpo.querySelectorAll('.pagina-cuaderno')) p.hidden = p.dataset.pagina !== nombre;
+      for (const b of cuerpo.querySelectorAll('.pestana-cuaderno')) b.setAttribute('aria-pressed', String(b.dataset.pagina === nombre));
+      cuerpo.scrollTop = alturasC[nombre] || 0;
+      const nueva = cuerpo.querySelector(`.pagina-cuaderno[data-pagina="${nombre}"]`);
+      if (nueva) { nueva.classList.remove('entra-izq', 'entra-der'); void nueva.offsetWidth; nueva.classList.add(hacia); }
+    };
+    // Deslizar: sobre todo horizontal y de más de 70 px (no en una casilla, ni en lo que se mueve de lado)
+    let dedoC = null;
+    cuerpo.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      dedoC = e.touches.length === 1 && !e.target.closest('input, textarea, select, .arbol-caja, .miniaturas, .tabla-fotos, .tabla-medidas, .galeria, .comp-marco')
+        ? { x: t.clientX, y: t.clientY } : null;
+    }, { passive: true });
+    cuerpo.addEventListener('touchend', (e) => {
+      if (!dedoC || leer('quimica.receta-junta', false) === true || !cuerpo.querySelector('.pestanas-cuaderno')) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - dedoC.x;
+      const dy = t.clientY - dedoC.y;
+      dedoC = null;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > 1.6 * Math.abs(dy)) {
+        const i = PAGINAS.indexOf(paginaCuaderno) + (dx < 0 ? 1 : -1);
+        if (i >= 0 && i < PAGINAS.length) irPaginaCuaderno(PAGINAS[i]);
+      }
+    }, { passive: true });
     const pintar = () => {
       const c = leerCuaderno();
       const ficha = K.fichaCuaderno(c, { cuadernoId: cid, recetaId: recetaIdInicial });
@@ -3478,9 +3518,10 @@
       const entradas = filtro === 'todos' ? c.entradas.filter((e) => K.casa(e, amb)) : K.historiaDe(c, filtro);
 
       const arbol = arbolDeMuestras(c, receta, (gid) => abrirGrupo(receta, gid, pintar), amb);
-      poner(cuerpo,
-        cabecera,
-        avisosDeToca(c, amb, pintar),
+      // El cuaderno en tres bloques (versión 116, lo pidió el usuario: «como las recetas: varias pestañas»):
+      // muestras y disoluciones (la principal, en el medio), bitácora (a la izquierda) y fotos (a la derecha).
+      // Con «Todo en una sola pantalla» (Ajustes), todo seguido y en el orden de siempre
+      const bMuestras = [
         arbol && [h('h3', { text: '🌳 Cómo van las muestras' }), arbol],
         h('h3', { text: '🧫 Grupos de muestras' }),
         grupos.length
@@ -3541,18 +3582,17 @@
           recordarPrepara(receta, fase, true);
           prepararDisolucion(recetaDe(receta.id) || receta, fase, { nombre: nombreDis.value.trim() || K.nombreDisolucion(leerCuaderno(), amb, fase), preparada: cuanta.value.trim(), nota: r.nota, fotos: r.fotos, amb });
           pintar();
-        } }),
-        h('h3', { text: '🖼️ Fotos' }),
-        (() => {
-          const n = K.fotosDe(c, amb).length;
-          return h('button', { class: 'boton secundario', text: n ? `🖼️ Ver las ${n === 1 ? 'fotos (1)' : `${n} fotos`} y compararlas` : '🖼️ Fotos (aún no hay ninguna)', onclick: () => abrirFotos(receta, pintar, amb) });
-        })(),
-        // Lo medido (versión 114): se apunta desde cada grupo; aquí se comparan
-        (() => {
-          const t = K.medidasDe(c, amb);
-          return t.filas.length > 0 && [h('h3', { text: '📏 Medidas' }),
-            h('button', { class: 'boton secundario', text: `📏 Comparar medidas: ${t.filas.length} ${t.filas.length === 1 ? 'medida' : 'medidas'} en ${t.grupos.length} ${t.grupos.length === 1 ? 'grupo' : 'grupos'}`, onclick: () => abrirMedidas(receta, pintar, amb) })];
-        })(),
+        } })];
+      const nFotos = K.fotosDe(c, amb).length;
+      const bFotos = [h('h3', { text: '🖼️ Fotos' }),
+        h('button', { class: 'boton secundario', text: nFotos ? `🖼️ Ver las ${nFotos === 1 ? 'fotos (1)' : `${nFotos} fotos`} y compararlas` : '🖼️ Fotos (aún no hay ninguna)', onclick: () => abrirFotos(receta, pintar, amb) })];
+      // Lo medido (versión 114): se apunta desde cada grupo; aquí se comparan
+      const bMedidas = (() => {
+        const t = K.medidasDe(c, amb);
+        return t.filas.length > 0 && [h('h3', { text: '📏 Medidas' }),
+          h('button', { class: 'boton secundario', text: `📏 Comparar medidas: ${t.filas.length} ${t.filas.length === 1 ? 'medida' : 'medidas'} en ${t.grupos.length} ${t.grupos.length === 1 ? 'grupo' : 'grupos'}`, onclick: () => abrirMedidas(receta, pintar, amb) })];
+      })();
+      const bBitacora = [
         h('h3', { text: '📖 Bitácora' }),
         grupos.length > 1 && h('div', { class: 'chips' },
           [{ id: 'todos', nombre: 'Todos' }, ...grupos].map((g) => h('button', { class: 'chip', 'aria-pressed': String(filtro === g.id), text: g.nombre, onclick: () => { filtro = g.id; pintar(); } }))),
@@ -3560,7 +3600,8 @@
         grupos.length > 1 && h('button', { class: 'boton secundario', text: '👥 Apuntar algo de varios grupos a la vez (microscopio, fases…)', onclick: apuntarVarios }),
         bitacoraBuscada(c, entradas, { desde: filtro === 'todos' ? null : filtro, alCambiar: pintar },
           h('p', { class: 'nota', text: 'Aún no hay nada. Al final de cada fase de los pasos de la receta está el botón «🏁 Terminar fase»; y tocando un grupo, todo lo demás. Se apunta aquí con la fecha y la hora.' })),
-        botonCopiar(`${receta.nombre} · ${ficha.nombre}`, entradas),
+        botonCopiar(`${receta.nombre} · ${ficha.nombre}`, entradas)];
+      const bMas = [
         h('h3', { text: 'Más' }),
         h('button', { class: 'boton secundario', text: '📄 Hacer un informe con toda la historia (PDF)', onclick: () => abrirInforme(receta, amb, ficha) }),
         h('button', { class: 'boton secundario', text: '📓 Empezar otro cuaderno con esta receta (otro experimento)', onclick: async () => {
@@ -3568,7 +3609,29 @@
           if (!id || id === 'quitado') return;
           const k = K.fichaCuaderno(leerCuaderno(), { cuadernoId: id });
           cerrarCapas(1, () => abrirCuadernoDe(id, k.recetaId || null, alVolver));
-        } }));
+        } })];
+      if (leer('quimica.receta-junta', false) === true) {
+        // Todo seguido, como antes
+        poner(cuerpo, cabecera, avisosDeToca(c, amb, pintar), bMuestras, bFotos, bMedidas, bBitacora, bMas);
+        return;
+      }
+      // Tres pestañas: bitácora | muestras y disoluciones | fotos (las fotos, la misma pantalla de siempre
+      // dentro de la pestaña: se crea una vez por cuaderno y receta, para que no pierda sus filtros)
+      const claveFotos = `${rid}|${cid}`;
+      if (!fotosCaja || fotosCaja.clave !== claveFotos) fotosCaja = { clave: claveFotos, el: h('div', { class: 'fotos-embebidas' }), listo: false };
+      if (paginaCuaderno === 'fotos' && !fotosCaja.listo) { fotosCaja.listo = true; abrirFotos(receta, pintar, amb, fotosCaja.el); }
+      mostrarFotos = () => { if (!fotosCaja.listo) { fotosCaja.listo = true; abrirFotos(receta, pintar, amb, fotosCaja.el); } };
+      const hoja = (nombre, ...bloques) => h('div', { class: 'pagina-receta pagina-cuaderno', 'data-pagina': nombre, hidden: paginaCuaderno !== nombre }, ...bloques);
+      const pestana = (nombre, texto) => h('button', { class: 'pestana-receta pestana-cuaderno', type: 'button', 'data-pagina': nombre, 'aria-pressed': String(paginaCuaderno === nombre),
+        text: texto, onclick: () => irPaginaCuaderno(nombre) });
+      poner(cuerpo, cabecera, avisosDeToca(c, amb, pintar),
+        h('div', { class: 'pestanas-receta pestanas-cuaderno' },
+          pestana('bitacora', `📖 Bitácora${entradas.length ? ` (${entradas.length})` : ''}`),
+          pestana('muestras', '🧫 Muestras'),
+          pestana('fotos', `🖼️ Fotos${nFotos ? ` (${nFotos})` : ''}`)),
+        hoja('bitacora', bBitacora),
+        hoja('muestras', bMuestras, bMedidas, bMas),
+        hoja('fotos', fotosCaja.el));
     };
     // (si llega algo del PC mientras se escribe en el buscador, no se repinta: se perdería el teclado)
     alLlegarCambios(cuerpo, () => { if (!buscador || document.activeElement !== buscador) pintar(); });
@@ -4136,8 +4199,9 @@
   // usuario: álbumes hechos a mano (grupos de fotos), varios grupos de muestras a la vez en el filtro,
   // y filtrar por tipo (de entrada solo los análisis: «yo solo quiero analizar muestras»). Las fotos
   // marcadas con el círculo se comparan o se añaden a un álbum
-  const abrirFotos = (receta, alVolver, amb = ambitoActual(receta)) => {
-    const { cuerpo } = abrirPanel('🖼️ Fotos', null, alVolver);
+  // contenedor: si se da (la pestaña «Fotos» del cuaderno), las fotos van dentro de él y no en un panel
+  const abrirFotos = (receta, alVolver, amb = ambitoActual(receta), contenedor = null) => {
+    const cuerpo = contenedor || abrirPanel('🖼️ Fotos', null, alVolver).cuerpo;
     const filtro = { grupos: new Set(), apartado: '', aumento: '', tecnica: '', fase: '' }; // vacío = todos
     let album = ''; // el álbum que se está viendo ('' = todas las fotos)
     const plegadas = new Set(); // las sesiones plegadas (ids de sus apuntes)
@@ -5275,7 +5339,7 @@
         h('h3', { text: '📱 Pantalla de la receta' }),
         h('label', { class: 'parte-opcion' },
           h('input', { type: 'checkbox', checked: leer('quimica.receta-junta', false) === true, onchange: (e) => guardar('quimica.receta-junta', e.target.checked) }),
-          ' Todo en una sola pantalla (sin pestañas)'),
+          ' Todo en una sola pantalla (sin pestañas: recetas y cuadernos)'),
         h('p', { class: 'nota', text: 'Por defecto, la receta tiene dos pantallas: «🧮 Datos» a la izquierda y «📋 Pasos» a la derecha. Se cambia con las pestañas de arriba o deslizando el dedo hacia un lado. Si lo prefieres, marca esto y vuelve todo seguido.' }),
         h('h3', { text: '💾 Copia de seguridad de todo' }),
         h('p', { class: 'nota', text: 'Guarda en un archivo las recetas, el cuaderno entero (grupos, apuntes, disoluciones) y, si quieres, las fotos. Sirve para no perder nada si se borran los datos del navegador, se desinstala la app o cambias de móvil. No lleva la clave de Gemini.' }),

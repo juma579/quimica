@@ -703,3 +703,7 @@ small.aviso-sentido[hidden] { display: none; }
 .informe-distinto { margin: 2px 0; font-size: 13.5px; }
 .arbol-llegada { font-size: 12px; }
 .resultado-global { display: block; width: 100%; text-align: left; margin-bottom: 8px; } .resultado-global small { display: block; opacity: .75; margin-top: 2px; }
+
+/* Las pestañas del cuaderno (versión 116): tres, así que más estrechas */
+.pestanas-cuaderno .pestana-receta { font-size: 14px; padding: 10px 4px; }
+.fotos-embebidas { min-height: 120px; }
