@@ -688,3 +688,18 @@ small.aviso-sentido[hidden] { display: none; }
 .aviso-pc { margin: 4px 0 12px; }
 .nota.aviso-texto { color: var(--aviso-texto); background: var(--aviso-fondo); padding: 6px 10px; border-radius: 8px; }
 .ruta-datos { margin: 4px 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--color-suave); font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-all; user-select: all; }
+
+/* Medidas por grupo (versión 114) */
+.medidas-editor { display: flex; flex-direction: column; gap: 10px; margin: 8px 0; }
+.medida-fila { display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; }
+.medida-valor { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; align-items: center; }
+.tabla-medidas th { font-weight: 600; }
+.celda-medida { text-align: center; min-width: 88px; padding: 6px 8px; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 10px; }
+.medida-valor-celda { border: 0; background: none; color: inherit; font: inherit; font-size: 15px; cursor: pointer; padding: 4px; }
+.medida-valor-celda small { color: var(--texto-suave, inherit); opacity: .7; }
+.medida-vacia { opacity: .4; }
+.medidas-historial p { margin: 4px 0; }
+.entrada-distinto { display: block; margin-top: 4px; padding: 3px 8px; border-radius: 8px; background: var(--aviso-fondo); color: var(--aviso-texto); }
+.informe-distinto { margin: 2px 0; font-size: 13.5px; }
+.arbol-llegada { font-size: 12px; }
+.resultado-global { display: block; width: 100%; text-align: left; margin-bottom: 8px; } .resultado-global small { display: block; opacity: .75; margin-top: 2px; }

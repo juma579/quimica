@@ -19,6 +19,8 @@
 //     tipo 'separar'  { nuevoId, nuevo, cuantas }     ✂️ unas muestras pasan a otro grupo
 //     tipo 'pasar'    { nuevoId, nuevo, cuantas, haciaCuaderno }  📤 muestras que pasan a otro cuaderno
 //     tipo 'llegar'   { desdeId, desde, cuantas, deCuaderno }     📥 muestras que llegan de otro cuaderno
+//     tipo 'medida'   { medidas: [{ nombre, valor, unidad }] }   📏 lo medido (capacitancia, espesor…)
+//     (cualquier apunte de una fase puede llevar `distinto`: «lo que hice distinto a la receta»)
 //     tipo 'comparar' { comparadas: [idFoto], de }    ⚖️ lo que se vio al comparar unas fotos (enlazadas,
 //                                                     no son suyas: borrar la entrada no las borra)
 //     tipo 'nota'                                     ✍️ lo que sea
@@ -198,6 +200,7 @@
       case 'separar': return `✂️ ${e.cuantas} ${e.cuantas === 1 ? 'muestra pasa' : 'muestras pasan'} a «${e.nuevo}»`;
       case 'juntar': return `🔗 ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra se junta' : 'muestras se juntan'}` : 'Se junta'} con «${e.nuevo}»`;
       case 'recibir': return `🔗 Se le juntan ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra' : 'muestras'} ` : ''}de «${e.desde}»`;
+      case 'medida': return `📏 ${lineasDeMedidas(e.medidas) || 'Medida'}`;
       case 'pasar': return `📤 ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra pasa' : 'muestras pasan'}` : 'Pasa'} al cuaderno «${e.haciaCuaderno || 'otro'}»`;
       case 'llegar': return `📥 ${e.cuantas != null ? `Llegan ${e.cuantas} ${e.cuantas === 1 ? 'muestra' : 'muestras'}` : 'Llega'} del cuaderno «${e.deCuaderno || 'otro'}»`;
       case 'preparar': return `🧪 Preparada: ${e.disolucion}`;
@@ -252,6 +255,60 @@
     return { de, a };
   };
 
+  // ─── Medidas por grupo (versión 114; propuesto en «mejorar el cuaderno»: lo que se mide de cada muestra
+  // —capacitancia, resistencia, espesor, masa…— y compararlo entre grupos) ───
+  // Una entrada tipo 'medida': { grupoId, grupo, medidas: [{ nombre, valor (número), unidad }], nota?, fotos? }
+  const numTexto = (v) => String(Number(Number(v).toPrecision(6))).replace('.', ',');
+  const medidaTexto = (m) => `${m.nombre} ${numTexto(m.valor)}${m.unidad ? ` ${m.unidad}` : ''}`;
+  const lineasDeMedidas = (medidas) => (Array.isArray(medidas) ? medidas.filter((m) => m && m.nombre && Number.isFinite(m.valor)).map(medidaTexto).join(' · ') : '');
+  const claveMedida = (nombre) => sinTildes(String(nombre || '')).replace(/\s+/g, ' ').trim();
+  // Lo medido en un cuaderno: filas = lo que se mide, columnas = los grupos. Cada celda trae lo último
+  // (por fecha) y todo lo medido (n veces). { grupos: [{ id, nombre }], filas: [{ nombre, celdas: { grupoId: { valor, unidad, fecha, n, todos } } }] }
+  const medidasDe = (c, recetaId) => {
+    const entradas = c.entradas.filter((e) => e.tipo === 'medida' && casa(e, recetaId) && Array.isArray(e.medidas)).sort((a, b) => a.fecha - b.fecha);
+    const filas = new Map();
+    const orden = [];
+    for (const e of entradas) {
+      for (const m of e.medidas) {
+        if (!m || !m.nombre || !Number.isFinite(m.valor)) continue;
+        const k = claveMedida(m.nombre);
+        if (!filas.has(k)) filas.set(k, { nombre: String(m.nombre).trim(), celdas: {} });
+        const celda = filas.get(k).celdas[e.grupoId] || (filas.get(k).celdas[e.grupoId] = { todos: [] });
+        celda.todos.push({ valor: m.valor, unidad: m.unidad || '', fecha: e.fecha, entradaId: e.id });
+        if (!orden.includes(e.grupoId)) orden.push(e.grupoId);
+      }
+    }
+    for (const f of filas.values()) {
+      for (const celda of Object.values(f.celdas)) {
+        const u = celda.todos[celda.todos.length - 1];
+        celda.valor = u.valor; celda.unidad = u.unidad; celda.fecha = u.fecha; celda.n = celda.todos.length;
+      }
+    }
+    // Los grupos en el orden del cuaderno; los que ya no existen, con el nombre que quedó en el apunte
+    const enOrden = gruposDe(c, recetaId).map((g) => g.id).filter((id) => orden.includes(id));
+    const quitados = orden.filter((id) => !enOrden.includes(id));
+    const grupos = [...enOrden, ...quitados].map((id) => {
+      const g = grupoDe(c, id);
+      const e = entradas.find((x) => x.grupoId === id);
+      return { id, nombre: g ? g.nombre : (e && e.grupo) || 'Grupo quitado' };
+    });
+    return { grupos, filas: [...filas.values()] };
+  };
+  // Nombres de medidas ya usados (más usados primero) y la última unidad con la que se apuntó cada uno
+  const nombresDeMedidas = (c) => {
+    const cuenta = new Map();
+    for (const e of c.entradas) for (const m of (e.tipo === 'medida' && Array.isArray(e.medidas) ? e.medidas : [])) {
+      if (!m || !m.nombre) continue;
+      const k = claveMedida(m.nombre);
+      const x = cuenta.get(k) || { nombre: String(m.nombre).trim(), n: 0, unidad: '', fecha: -1 };
+      x.n++;
+      if (e.fecha >= x.fecha) { x.fecha = e.fecha; x.unidad = m.unidad || ''; }
+      cuenta.set(k, x);
+    }
+    return [...cuenta.values()].sort((a, b) => b.n - a.n);
+  };
+  const unidadDeMedida = (c, nombre) => (nombresDeMedidas(c).find((x) => claveMedida(x.nombre) === claveMedida(nombre)) || {}).unidad || '';
+
   // ─── Pasar muestras a otro cuaderno (lo pidió el usuario: «las muestras van a pasar por otro proceso;
   // quiero que guarden el historial, y que para acceder a él haya que darle a otro botón o que conecte
   // con el otro cuaderno») ───
@@ -291,6 +348,49 @@
     c.grupos.push(nuevo);
     c.entradas.push(e1, e2);
     return { nuevo, de: g, todas };
+  };
+
+  // La historia de antes de un grupo que llegó de otro cuaderno, de lo más cercano a lo más lejano:
+  // [{ cuaderno, grupoId, grupo, entradas }] (siguiendo la cadena si ese también vino de otro; cada tramo
+  // lleva su propia historia, con lo heredado de separar). Vacío si no llegó de ningún cuaderno
+  const historiaAnterior = (c, grupoId) => {
+    const tramos = [];
+    const vistos = new Set([grupoId]);
+    let g = grupoDe(c, grupoId);
+    while (g && g.vieneDe && !vistos.has(g.vieneDe)) {
+      const origen = grupoDe(c, g.vieneDe);
+      if (!origen) break;
+      vistos.add(origen.id);
+      tramos.push({ cuaderno: g.vieneCuaderno || 'otro cuaderno', grupoId: origen.id, grupo: origen.nombre, entradas: historiaDe(c, origen.id) });
+      g = origen;
+    }
+    return tramos;
+  };
+
+  // Deshacer un «pasar» (por si fue sin querer): el grupo nuevo desaparece y las muestras vuelven al de
+  // origen. Solo mientras el nuevo no tenga más apuntes que su «llegan» (si ya ha hecho cosas allí, no
+  // se pierde esa historia). nuevoId: el grupo que llegó. Cambia c. Lanza un error con el motivo
+  const deshacerPasar = (c, nuevoId) => {
+    const n = grupoDe(c, nuevoId);
+    if (!n || !n.vieneDe) throw new Error('Ese grupo no llegó de otro cuaderno');
+    const e1 = c.entradas.find((x) => x.tipo === 'pasar' && x.nuevoId === n.id);
+    const e2 = c.entradas.find((x) => x.tipo === 'llegar' && x.grupoId === n.id);
+    const otras = c.entradas.filter((x) => x !== e1 && x !== e2 && (x.grupoId === n.id || x.nuevoId === n.id || x.desdeId === n.id));
+    const derivados = c.grupos.some((x) => x.id !== n.vieneDe && (x.padre === n.id || x.juntadoEn === n.id || x.pasadoA === n.id));
+    if (otras.length || derivados) {
+      throw new Error(`El grupo nuevo ya ha hecho cosas allí (${otras.length} ${otras.length === 1 ? 'apunte' : 'apuntes'}): ya no se puede deshacer. Puedes seguir con él, o quitarlo aparte`);
+    }
+    const g = grupoDe(c, n.vieneDe);
+    const cuantas = e1 && e1.cuantas != null ? e1.cuantas : n.muestras;
+    if (g) {
+      if (g.pasadoA === n.id) {
+        delete g.pasadoA; delete g.pasadoDesde; delete g.pasadoCuaderno;
+        g.muestras = n.muestras != null ? n.muestras : cuantas != null ? cuantas : g.muestras;
+      } else if (g.muestras != null && cuantas != null) g.muestras += cuantas;
+    }
+    c.grupos = c.grupos.filter((x) => x.id !== n.id);
+    c.entradas = c.entradas.filter((x) => x !== e1 && x !== e2);
+    return { de: g, cuantas };
   };
 
   // ─── Las disoluciones ───
@@ -372,13 +472,23 @@
     // (con el nombre entero de la fase y su subfase: solo «Fase 2» era escueto, dijo el usuario)
     return `${u.tipo === 'empezar' ? 'en' : 'tras'} ${nombreFase(u.fase)}${u.subfase ? ` · ${u.subfase}` : ''}${vez > 1 ? ` (${vez}.ª vez)` : ''}`;
   };
+  // En qué fase estaba lo que se apuntó (para filtrar las fotos por fase, versión 114): la del propio
+  // apunte (empezar, terminar, preparar) o, si es un análisis o una nota, la última que ese grupo
+  // había empezado o terminado antes. '' si no se sabe (sin grupo, o sin empezar)
+  const faseDeEntrada = (c, e) => {
+    if (e.fase) return e.fase;
+    if (!e.grupoId || !grupoDe(c, e.grupoId)) return '';
+    const antes = historiaDe(c, e.grupoId).filter((x) => x.fecha <= e.fecha && (x.tipo === 'empezar' || x.tipo === 'fase'));
+    const u = antes[antes.length - 1];
+    return u && u.fase ? u.fase : '';
+  };
   // Los álbumes de fotos de un cuaderno (lo pidió el usuario: hacer grupos con sus fotos), por orden
   // de creación. { id, recetaId, cuadernoId?, nombre, fotos: [idFoto], fecha }
   const albumesDe = (c, recetaId) => c.albumes.filter((a) => casa(a, recetaId)).sort((a, b) => (a.fecha || 0) - (b.fecha || 0));
   // De qué tipo es lo que se apuntó con unas fotos, para filtrarlas: 'analisis' (microscopio…),
   // 'disoluciones' (prepararla, su estado o una nota suya), 'notas' o 'fases' (empezar, terminar,
   // separar, juntar)
-  const tipoFoto = (e) => (e.tipo === 'analisis' ? 'analisis'
+  const tipoFoto = (e) => (e.tipo === 'analisis' || e.tipo === 'medida' ? 'analisis'
     : e.tipo === 'preparar' || e.tipo === 'estado' || e.disolucionId ? 'disoluciones'
       : e.tipo === 'nota' || e.tipo === 'comparar' ? 'notas' : 'fases');
   // Las elegidas para comparar que siguen existiendo, en su orden
@@ -399,7 +509,7 @@
   // palabra tiene que salir; una de más de 4 letras vale también con otra terminación ("denso" →
   // "densas"); una corta (SEM, CuO), solo como palabra entera ("SEM" no es "sembrado")
   const sinTildes = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const textoDeEntrada = (c, e) => [titularDe(e), e.grupo, e.nota, e.tecnica, e.fase, e.subfase, e.disolucion, e.nuevo, e.desde, e.haciaCuaderno, e.deCuaderno,
+  const textoDeEntrada = (c, e) => [titularDe(e), e.grupo, e.nota, e.tecnica, e.fase, e.subfase, e.disolucion, e.nuevo, e.desde, e.haciaCuaderno, e.deCuaderno, lineasDeMedidas(e.medidas), e.distinto,
     ...(e.disoluciones || []).map((x) => x.nombre), ...(e.de || []), ...(e.apartados || []),
     ...Object.values(e.fotosInfo || {}).flatMap((i) => [i.aumento, i.zona, i.apartado]),
     ...(e.fotos || []).map((id) => c.titulos && c.titulos[id])].filter(Boolean).join('\n');
@@ -435,7 +545,7 @@
     .filter(Boolean)
     .sort((a, b) => a.dias - b.dias);
 
-  const Cuaderno = { vacio, limpiar, grupoDe, gruposDe, ordenarGrupos, mismoSitio, juntar, pasar, principal, cuadernoDe, ambito, casa, marcaDe, claveComparar, cuadernosDe, fichaCuaderno, todosLosCuadernos, carpetasDe, gruposEnCarpeta, colocarGrupos, historiaDe, estadoDe, yaHizo, faseParaEmpezar, faseParaTerminar, nombreFase, titularDe, separar,
+  const Cuaderno = { vacio, limpiar, grupoDe, gruposDe, ordenarGrupos, mismoSitio, juntar, pasar, deshacerPasar, historiaAnterior, faseDeEntrada, medidasDe, nombresDeMedidas, unidadDeMedida, numTexto, lineasDeMedidas, principal, cuadernoDe, ambito, casa, marcaDe, claveComparar, cuadernosDe, fichaCuaderno, todosLosCuadernos, carpetasDe, gruposEnCarpeta, colocarGrupos, historiaDe, estadoDe, yaHizo, faseParaEmpezar, faseParaTerminar, nombreFase, titularDe, separar,
     buscar, textoDeEntrada, avisosToca, diasHasta,
     fotosDe, tituloFoto, comparadas, olvidarFotos, infoFoto, apartadosDe, momentoDe, albumesDe, tipoFoto,
     ESTADOS, disolucionDe, disolucionesDe, disponible, sugeridas, historiaDisolucion, usadaPor, nombreDisolucion };

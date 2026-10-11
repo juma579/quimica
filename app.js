@@ -531,6 +531,59 @@
     if (r === null) return null;
     return { nota: r.trim(), fotos: await sel.guardar() };
   };
+  // Las medidas de un apunte (versión 114): una fila por cosa que se mide (nombre, valor, unidad). Los
+  // nombres ya usados salen como sugerencia, y al elegir uno se pone su última unidad.
+  // { el, valores() → [{ nombre, valor, unidad }] (solo las completas), incompletas() }
+  const editorMedidas = (iniciales = [], c = leerCuaderno()) => {
+    const idLista = idDe('dl');
+    const base = ['Capacitancia', 'Resistencia', 'Espesor', 'Masa', 'Rendimiento'];
+    const usados = K.nombresDeMedidas(c).map((x) => x.nombre);
+    const nombres = [...usados, ...base.filter((b) => !usados.some((u) => u.toLowerCase() === b.toLowerCase()))];
+    const caja = h('div', { class: 'medidas-editor' });
+    const filas = [];
+    const pintar = () => poner(caja, filas.map((f) => f.el));
+    const nueva = (m = {}) => {
+      const nombre = h('input', { class: 'campo', list: idLista, placeholder: 'Qué mides: capacitancia, espesor…', value: m.nombre || '', autocomplete: 'off', autocapitalize: 'sentences', 'aria-label': 'Qué se mide' });
+      const valor = h('input', { class: 'campo', type: 'text', inputmode: 'decimal', placeholder: 'Valor', value: m.valor == null ? '' : String(m.valor).replace('.', ','), autocomplete: 'off', 'aria-label': 'Valor' });
+      const unidad = h('input', { class: 'campo', placeholder: 'Unidad', value: m.unidad || '', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Unidad' });
+      nombre.addEventListener('change', () => { if (!unidad.value.trim()) unidad.value = K.unidadDeMedida(c, nombre.value); });
+      const f = { nombre, valor, unidad };
+      f.el = h('div', { class: 'medida-fila' }, nombre,
+        h('div', { class: 'medida-valor' }, valor, unidad,
+          h('button', { class: 'icono pequeno', type: 'button', 'aria-label': 'Quitar esta medida', text: '✕', onclick: () => {
+            if (filas.length === 1) { nombre.value = ''; valor.value = ''; unidad.value = ''; return; }
+            filas.splice(filas.indexOf(f), 1);
+            pintar();
+          } })));
+      return f;
+    };
+    for (const m of iniciales.length ? iniciales : [{}]) filas.push(nueva(m));
+    pintar();
+    const el = h('div', {}, h('datalist', { id: idLista }, nombres.map((n) => h('option', { value: n }))), caja,
+      h('button', { class: 'boton secundario', type: 'button', text: '＋ Otra medida', onclick: () => {
+        const f = nueva();
+        filas.push(f);
+        pintar();
+        f.nombre.focus();
+      } }));
+    const leerFila = (f) => ({ nombre: f.nombre.value.trim().slice(0, 60), valor: Q.aNumero(f.valor.value), unidad: f.unidad.value.trim().slice(0, 20) });
+    return {
+      el,
+      valores: () => filas.map(leerFila).filter((m) => m.nombre && m.valor != null && Number.isFinite(m.valor)),
+      // (las que tienen algo escrito pero les falta el nombre o el número)
+      incompletas: () => filas.map(leerFila).filter((m) => {
+        const conValor = m.valor != null && Number.isFinite(m.valor);
+        return (m.nombre || conValor) && !(m.nombre && conValor);
+      }).length,
+    };
+  };
+  // «¿Algo distinto a la receta?» (versión 114): una línea al terminar una fase, para saber luego qué
+  // cambió cuando un grupo sale raro. Va en el apunte como `distinto`. { el, valor() }
+  const campoDistinto = (inicial = '') => {
+    const i = h('input', { class: 'campo', autocomplete: 'off', autocapitalize: 'sentences', value: inicial,
+      placeholder: 'Por ejemplo: 12 min en vez de 10; la tinta estaba turbia', 'aria-label': 'Algo distinto a la receta' });
+    return { el: h('label', { class: 'etiqueta-campo campo-distinto' }, h('span', { text: '⚠️ ¿Algo distinto a la receta? (si quieres)' }), i), valor: () => i.value.trim().slice(0, 200) };
+  };
   // Un desplegable con las fases de la receta: { el, fase() }
   const elegirFase = (fases, marcada) => {
     const s = h('select', { class: 'campo' }, fases.map((f, i) => h('option', { value: String(i), text: K.nombreFase(f), selected: f === marcada })));
@@ -633,11 +686,11 @@
   // Preparar una disolución en una fase: la crea (con de qué está hecha según la receta de ahora) y
   // la apunta. Devuelve { disolucion, entrada }
   // (sub: la subfase en la que se prepara, si la hay: su composición es solo lo de sus pasos)
-  const prepararDisolucion = (receta, fase, { nombre, preparada, nota, fotos, sub, amb = ambitoActual(receta) }) => {
+  const prepararDisolucion = (receta, fase, { nombre, preparada, nota, fotos, sub, distinto, amb = ambitoActual(receta) }) => {
     // (con una copia de las cuentas de la receta, para poder corregir sus números después)
     const d = { id: idDe('d'), recetaId: receta.id, ...K.marcaDe(amb), nombre: nombre.slice(0, 80), fase, ...(sub ? { subfase: sub.nombre, rango: { desde: sub.desde, hasta: sub.hasta } } : {}), fecha: Date.now(), preparada: preparada || '', composicion: Q.composicionDe(receta, fase, sub), hoja: Q.hojaDe(receta), estado: 'queda', queda: '' };
     cambiarCuaderno((c) => { c.disoluciones.push(d); });
-    const entrada = apuntar({ tipo: 'preparar', disolucionId: d.id, disolucion: d.nombre, fase, recetaId: receta.id, ...K.marcaDe(amb), receta: receta.nombre, nota, fotos });
+    const entrada = apuntar({ tipo: 'preparar', disolucionId: d.id, disolucion: d.nombre, fase, recetaId: receta.id, ...K.marcaDe(amb), receta: receta.nombre, nota, fotos, ...(distinto ? { distinto } : {}) });
     return { disolucion: d, entrada };
   };
   // Las fases en las que se prepara una disolución: la app se acuerda de lo que se eligió la última vez
@@ -675,6 +728,7 @@
       h('input', { type: 'radio', name: 'para', checked: para === valor, onchange: () => { para = valor; mostrar(); } }),
       h('span', {}, h('b', { text: texto }), h('small', { text: detalle })));
     mostrar();
+    const distinto = campoDistinto();
     const r = await pedirApunte({
       texto: !sub ? `🏁 Terminar «${K.nombreFase(tramo.titulo)}»`
         : sub.parte === 'disolucion' ? `🧪 Disolución preparada: ${sub.nombre}` : `🏁 Muestras terminadas: ${sub.nombre}`,
@@ -685,6 +739,7 @@
           opcion('disolucion', '🧪 He preparado una disolución', 'Para usarla después con uno o varios grupos')),
         sub && h('p', { class: 'dialogo-detalle', text: K.nombreFase(tramo.titulo) }),
         zonaMuestras, zonaDisolucion,
+        distinto.el,
         h('p', { class: 'dialogo-detalle', text: (() => {
           // Con varios cuadernos, se dice en cuál (se cambia en 📓)
           const todos = K.cuadernosDe(c, receta.id);
@@ -695,7 +750,7 @@
     if (!r) return;
     if (!sub) recordarPrepara(receta, tramo.titulo, para === 'disolucion');
     if (para === 'disolucion') {
-      const { disolucion, entrada } = prepararDisolucion(receta, tramo.titulo, { nombre: nombreDis.value.trim() || K.nombreDisolucion(leerCuaderno(), amb, tramo.titulo, sub && sub.nombre), preparada: cuanta.value.trim(), nota: r.nota, fotos: r.fotos, sub, amb });
+      const { disolucion, entrada } = prepararDisolucion(receta, tramo.titulo, { nombre: nombreDis.value.trim() || K.nombreDisolucion(leerCuaderno(), amb, tramo.titulo, sub && sub.nombre), preparada: cuanta.value.trim(), nota: r.nota, fotos: r.fotos, sub, amb, distinto: distinto.valor() });
       vibrar(30);
       avisar(`🧪 Apuntada: ${disolucion.nombre}`, { texto: 'Deshacer', hacer: () => { quitarEntrada(entrada.id); cambiarCuaderno((d) => { d.disoluciones = d.disoluciones.filter((x) => x.id !== disolucion.id); }); } });
       return;
@@ -717,7 +772,7 @@
       g = creado;
     }
     const usadas = disoluciones.elegidas();
-    const e = apuntar({ tipo: 'fase', fase: tramo.titulo, ...(sub ? { subfase: sub.nombre } : {}), grupoId: g ? g.id : null, grupo: g ? g.nombre : null, recetaId: receta.id, ...K.marcaDe(amb), receta: receta.nombre, nota: r.nota, fotos: r.fotos, ...(usadas.length ? { disoluciones: usadas } : {}) });
+    const e = apuntar({ tipo: 'fase', fase: tramo.titulo, ...(sub ? { subfase: sub.nombre } : {}), grupoId: g ? g.id : null, grupo: g ? g.nombre : null, recetaId: receta.id, ...K.marcaDe(amb), receta: receta.nombre, nota: r.nota, fotos: r.fotos, ...(distinto.valor() ? { distinto: distinto.valor() } : {}), ...(usadas.length ? { disoluciones: usadas } : {}) });
     disoluciones.guardar();
     vibrar(30);
     // "Deshacer" quita también el grupo que se acaba de crear
@@ -2338,12 +2393,38 @@
   // Todos: los creados (con o sin receta) y el de cada receta que tenga algo, lo último usado arriba
   // (en la app de internet conectada al PC: «💻 Tienes cambios sin pasar al PC»; se pone más abajo)
   let avisoPendientePC = () => null;
+  // Lo escrito en «Buscar en todos los cuadernos» (versión 114): se recuerda mientras la app está abierta
+  let busquedaGlobal = '';
   const pintarCuadernos = () => {
     const caja = $('vista-cuadernos');
     const c = leerCuaderno();
     const lista = K.todosLosCuadernos(c);
+    // Los resultados de buscar en TODOS los cuadernos: al tocar uno, se abre su cuaderno ya buscado
+    const resultados = h('div', { class: 'resultados-globales' });
+    const tarjetas = h('div', { class: 'lista-cuadernos' });
+    const verBusqueda = () => {
+      const q = busquedaGlobal.trim();
+      tarjetas.hidden = Boolean(q);
+      if (!q) { poner(resultados); return; }
+      const todos = K.buscar(c, c.entradas, q).sort((a, b) => b.fecha - a.fecha);
+      const vistos = todos.slice(0, 60);
+      poner(resultados,
+        h('p', { class: 'nota resultado-busqueda', text: todos.length ? `🔎 ${todos.length} ${todos.length === 1 ? 'apunte dice' : 'apuntes dicen'} «${q}» en todos los cuadernos${todos.length > vistos.length ? ` (los ${vistos.length} más nuevos)` : ''}` : `🔎 Ningún apunte de ningún cuaderno dice «${q}»` }),
+        vistos.map((e) => {
+          const cid = K.cuadernoDe(e);
+          const ficha = K.fichaCuaderno(c, K.ambito(e.recetaId || null, cid));
+          return h('button', { class: 'tarjeta resultado-global', onclick: () => abrirCuadernoDe(cid, e.recetaId || null, pintarCuadernos, q) },
+            h('b', { text: K.titularDe(conNombresDeAhora(c, e)) }),
+            h('small', { text: `📓 ${ficha.nombre}${e.grupo ? ` · 🧫 ${e.grupo}` : ''} · ${fechaCorta(e.fecha)}` }),
+            e.distinto && h('small', { class: 'entrada-distinto', text: `⚠️ ${e.distinto}` }),
+            e.nota && h('span', { class: 'entrada-nota', text: e.nota.length > 140 ? `${e.nota.slice(0, 140)}…` : e.nota }));
+        }));
+    };
+    const buscador = lista.length > 0 && c.entradas.length > 0 && h('input', { class: 'campo buscar-todos', type: 'search', value: busquedaGlobal, enterkeyhint: 'search',
+      placeholder: '🔎 Buscar en todos los cuadernos: SEM, grupo B…', 'aria-label': 'Buscar en todos los cuadernos',
+      oninput: (e) => { busquedaGlobal = e.target.value; verBusqueda(); } });
     // Arriba, lo que les toca hoy o mañana a los grupos (o ya se pasó)
-    poner(caja, avisoPendientePC(), avisosDeToca(c, null, pintarCuadernos), lista.length
+    poner(tarjetas, lista.length
       ? lista.map((x) => h('button', { class: 'tarjeta cuaderno-tarjeta', onclick: () => abrirCuadernoDe(x.ambito.cuadernoId, x.ambito.recetaId, pintarCuadernos) },
         h('h3', { text: `📓 ${x.ficha.nombre}` }),
         h('p', { text: x.ambito.recetaId ? `📋 ${nombreDeReceta(c, x.ambito.recetaId)}` : 'Sin receta (solo notas)' }),
@@ -2352,6 +2433,8 @@
         h('p', { class: 'vacio-dibujo', text: '📓' }),
         h('p', { text: 'Aún no hay ningún cuaderno.' }),
         h('p', { class: 'nota', text: 'Cada cuaderno es un experimento: sus grupos de muestras, sus disoluciones, sus fotos y lo que vas apuntando. Crea uno con «＋ Nuevo cuaderno», o abre una receta (📋, arriba) y pulsa «🏁 Terminar fase»: se apunta en su cuaderno.' })));
+    poner(caja, avisoPendientePC(), avisosDeToca(c, null, pintarCuadernos), buscador, resultados, tarjetas);
+    verBusqueda();
   };
   const nuevoCuaderno = async () => {
     const id = await editarFichaCuaderno(null, null);
@@ -2395,6 +2478,9 @@
     const muestras = conMuestras && h('input', { class: 'campo', type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Nº de muestras (si quieres)', value: e.muestras == null ? '' : String(e.muestras) });
     // Al separar: cuántas pasaron al grupo nuevo (al cambiarlo, cambian también los dos grupos)
     const pasan = e.tipo === 'separar' && h('input', { class: 'campo', type: 'text', inputmode: 'numeric', autocomplete: 'off', value: e.cuantas == null ? '' : String(e.cuantas) });
+    // Una medida: sus filas se corrigen aquí (nombre, valor, unidad)
+    const distintoEd = (e.tipo === 'fase' || e.tipo === 'preparar' || e.distinto) && campoDistinto(e.distinto || '');
+    const medidasEd = e.tipo === 'medida' && editorMedidas(Array.isArray(e.medidas) ? e.medidas : [], leerCuaderno());
     // Sus fotos: se quitan con ✕ y se añaden otras, y se reparten en apartados con título (lo pidió
     // el usuario: «ordenar las fotos en grupos y ponerles título», que luego se ve en Fotos). Todo se
     // guarda al dar a Guardar. Cada apartado lleva una clave suya (k) para poder cambiarle el título
@@ -2438,6 +2524,8 @@
         muestras && h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Nº de muestras' }), muestras),
         pasan && h('label', { class: 'etiqueta-campo' }, h('span', { text: `Muestras que pasan a «${e.nuevo}»` }), pasan),
         pasan && h('p', { class: 'nota', text: `Si lo cambias, cambia también cuántas tiene cada grupo (las que no pasan se quedan en «${e.grupo}»).` }),
+        medidasEd && medidasEd.el,
+        distintoEd && distintoEd.el,
         dis && dis.el, cajaFotos, nuevas.el],
       campo: { filas: 3, value: e.nota || '', placeholder: 'Nota', autocapitalize: 'sentences' }, si: 'Guardar', no: 'Cancelar' });
     if (nota === null) return;
@@ -2450,6 +2538,8 @@
       if (!x) return;
       x.nota = nota.trim();
       if (muestras) { if (n > 0) x.muestras = Math.round(n); else delete x.muestras; }
+      if (medidasEd) { const v = medidasEd.valores(); if (v.length) x.medidas = v; }
+      if (distintoEd) { const v = distintoEd.valor(); if (v) x.distinto = v; else delete x.distinto; }
       const m = pasan ? Math.round(Q.aNumero(pasan.value)) : null;
       if (pasan && m >= 1 && m !== x.cuantas) {
         const dif = m - (x.cuantas || 0);
@@ -2551,6 +2641,7 @@
           })(),
           e.disoluciones && e.disoluciones.length > 0 && h('small', { text: `🧪 con ${e.disoluciones.map((x) => x.nombre).join(', ')}` }),
           e.tipo === 'nota' && e.disolucion && h('small', { text: `🧪 ${e.disolucion}` }),
+          e.distinto && h('small', { class: 'entrada-distinto', text: `⚠️ Distinto a la receta: ${e.distinto}` }),
           e.tipo === 'comparar' && (e.de || []).length > 0 && h('small', { text: `De: ${e.de.join(', ')}` }),
           e.aprox && h('small', { class: 'por-confirmar', text: '📅 Fecha por confirmar: toca para cambiarla' }),
           e.nota && h('span', { class: 'entrada-nota', text: e.nota })),
@@ -2571,6 +2662,7 @@
       const d = diaDe(e.fecha);
       if (d !== dia) { lineas.push('', d); dia = d; }
       lineas.push(`${horaDe(e.fecha)}  ${[e.grupo, K.titularDe(e), e.disoluciones && e.disoluciones.length && `con ${e.disoluciones.map((x) => x.nombre).join(', ')}`, e.tipo === 'nota' && e.disolucion].filter(Boolean).join(' · ')}${e.fotos ? ` (📷 ${e.fotos.length})` : ''}`);
+      if (e.distinto) lineas.push(`       ⚠️ Distinto a la receta: ${e.distinto}`);
       if (e.nota) lineas.push(`       ${e.nota}`);
     }
     return lineas.join('\n');
@@ -2954,7 +3046,8 @@
         est.estado === 'en'
           ? s('circle', { cx: xFin, cy: y(fin), r: 6, fill: color, ...deQuien(g.id, Infinity) })
           : s('line', { x1: xFin - 10, y1: y(fin), x2: xFin + 10, y2: y(fin), stroke: color, 'stroke-width': 4, 'stroke-linecap': 'round', ...deQuien(g.id, Infinity) }),
-        void etiquetas.push(s('g', { class: 'arbol-etiqueta', 'data-grupo': g.id, 'data-dueno': g.id, 'data-nombre': '1' }, s('text', { x: nombreX, y: nombreY, class: 'arbol-nombre', fill: color }, `${est.estado === 'terminado' ? '✅ ' : est.estado === 'juntado' ? '🔗 ' : est.estado === 'pasado' ? '📤 ' : ''}${corto(g.nombre, est.estado === 'terminado' || est.estado === 'juntado' || est.estado === 'pasado' ? LETRAS - 2 : LETRAS)}`),
+        void etiquetas.push(s('g', { class: 'arbol-etiqueta', 'data-grupo': g.id, 'data-dueno': g.id, 'data-nombre': '1' }, g.vieneDe && s('text', { x: xi, y: y(0) - 5, 'text-anchor': 'middle', class: 'arbol-llegada' }, '📥', s('title', {}, `Llegó del cuaderno «${g.vieneCuaderno || 'otro'}»: su historia anterior está allí`)),
+          s('text', { x: nombreX, y: nombreY, class: 'arbol-nombre', fill: color }, `${est.estado === 'terminado' ? '✅ ' : est.estado === 'juntado' ? '🔗 ' : est.estado === 'pasado' ? '📤 ' : ''}${corto(g.nombre, est.estado === 'terminado' || est.estado === 'juntado' || est.estado === 'pasado' ? LETRAS - 2 : LETRAS)}`),
         // (en corto, para que no se monte con el de al lado; un grupo juntado ya no tiene)
         g.muestras != null && est.estado !== 'juntado' && est.estado !== 'pasado' && s('text', { x: nombreX, y: nombreY + 14, class: 'arbol-muestras' }, `🧫 ${g.muestras}`))),
         // Una zona invisible ancha, para que sea fácil tocarlo
@@ -3010,7 +3103,7 @@
       columnas.length > 1 && botones,
       h('div', { class: 'arbol-caja' }, svg),
       // Qué es cada cosa
-      h('p', { class: 'arbol-leyenda', text: '● va por aquí · ━ terminó ahí · 🔁 repitió fases · 🔬 análisis · ┅ se juntó con otro · un hueco en una línea: la otra pasa por encima sin tocarla · en gris: lo que hizo en otra carpeta' }));
+      h('p', { class: 'arbol-leyenda', text: '● va por aquí · ━ terminó ahí · 🔁 repitió fases · 🔬 análisis · ┅ se juntó con otro · 📥 llegó de otro cuaderno · 📤 pasó a otro cuaderno · un hueco en una línea: la otra pasa por encima sin tocarla · en gris: lo que hizo en otra carpeta' }));
     // (el color de cada grupo, para que sus tarjetas lleven el mismo)
     zona.colores = colores;
     return zona;
@@ -3023,7 +3116,7 @@
   // en un documento ordenado», para la memoria o para el tutor) ───
   // Se ve en la app y se guarda como PDF con «🖨️» (en Android, con el plugin Imprimir; en el PC y en
   // el iPhone, con la impresión del navegador). Devuelve { el, listo } (listo: cuando ya están las fotos)
-  const informeDe = (c, receta, amb, ficha, { conFotos }) => {
+  const informeDe = (c, receta, amb, ficha, { conFotos, conAnterior = true }) => {
     const esperas = [];
     const grupos = receta ? K.gruposDe(c, amb) : [];
     const entradas = c.entradas.filter((e) => K.casa(e, amb)).map((e) => conNombresDeAhora(c, e)).sort((a, b) => a.fecha - b.fecha);
@@ -3045,14 +3138,17 @@
         h('div', { class: 'informe-fotos' }, a.fotos.map((id) => foto(e, id)))]);
     };
     // Lo que ha ido haciendo cada grupo, en una línea por cosa (lo suyo, sin lo heredado)
-    const hitos = (g) => entradas.filter((e) => e.grupoId === g.id && ['empezar', 'fase', 'analisis', 'separar', 'juntar', 'recibir'].includes(e.tipo))
+    const hitos = (g) => entradas.filter((e) => e.grupoId === g.id && ['empezar', 'fase', 'analisis', 'separar', 'juntar', 'recibir', 'medida', 'pasar', 'llegar'].includes(e.tipo))
       .map((e) => `${fechaCorta(e.fecha)}: ${K.titularDe(e)}`);
+    // Lo medido, en una tabla (versión 114): una fila por lo que se mide y una columna por grupo
+    const medidas = receta ? K.medidasDe(c, amb) : { grupos: [], filas: [] };
     const dias = [];
     for (const e of entradas) {
       const d = diaDe(e.fecha);
       if (!dias.length || dias[dias.length - 1].dia !== d) dias.push({ dia: d, lista: [] });
       dias[dias.length - 1].lista.push(e);
     }
+    const distintos = entradas.filter((e) => e.distinto);
     const otrosDelEvento = (e) => entradas.filter((x) => x.evento && x.evento === e.evento && x.id !== e.id).map((x) => x.grupo).filter(Boolean);
     const el = h('article', { class: 'informe' },
       h('header', { class: 'informe-cabecera' },
@@ -3078,8 +3174,22 @@
           }))),
         grupos.map((g) => {
           const lista = hitos(g);
-          return lista.length > 0 && h('div', { class: 'informe-hitos' }, h('b', { text: g.nombre }), h('ul', {}, lista.map((t) => h('li', { text: t }))));
+          // Lo que le pasó en otros cuadernos antes de llegar aquí (versión 114)
+          const antes = conAnterior && g.vieneDe ? K.historiaAnterior(c, g.id) : [];
+          return [lista.length > 0 && h('div', { class: 'informe-hitos' }, h('b', { text: g.nombre }), h('ul', {}, lista.map((t) => h('li', { text: t })))),
+            antes.map((tr) => h('div', { class: 'informe-hitos informe-antes' },
+              h('b', { text: `${g.nombre} · antes, en el cuaderno «${tr.cuaderno}» (como «${tr.grupo}»)` }),
+              h('ul', {}, tr.entradas.filter((e) => e.tipo !== 'comparar').map((e) => h('li', { text: `${fechaCorta(e.fecha)}: ${K.titularDe(conNombresDeAhora(c, e))}${e.distinto ? ` — ⚠️ ${e.distinto}` : ''}${e.nota ? ` — ${e.nota}` : ''}` })))))];
         })],
+      medidas.filas.length > 0 && [h('h2', { text: '📏 Medidas' }),
+        h('table', { class: 'informe-tabla' },
+          h('thead', {}, h('tr', {}, h('th', { text: '' }), medidas.grupos.map((g) => h('th', {}, h('span', { class: 'informe-color', style: colorDe(g.id) ? `background: ${colorDe(g.id)}` : null }), g.nombre)))),
+          h('tbody', {}, medidas.filas.map((f) => h('tr', {}, h('td', { text: f.nombre }),
+            medidas.grupos.map((g) => {
+              const x = f.celdas[g.id];
+              return h('td', { class: 'informe-numero', text: x ? `${K.numTexto(x.valor)}${x.unidad ? ` ${x.unidad}` : ''}${x.n > 1 ? ` (última de ${x.n})` : ''}` : '—' });
+            }))))),
+        h('p', { class: 'informe-meta', text: 'Lo último medido de cada grupo; las medidas anteriores están en la historia.' })],
       disoluciones.length > 0 && [h('h2', { text: '🧪 Disoluciones' }), disoluciones.map((d) => {
         const usos = K.usadaPor(c, d.id);
         return h('section', { class: 'informe-disolucion' },
@@ -3088,6 +3198,10 @@
           (d.composicion || []).length > 0 && h('table', { class: 'informe-tabla' }, h('tbody', {}, d.composicion.map((x) => h('tr', {}, h('td', { text: x.nombre }), h('td', { class: 'informe-numero', text: x.texto }))))),
           usos.length > 0 && h('p', { text: `Usada por: ${usos.map((u) => u.grupo).join(', ')}` }));
       })],
+      distintos.length > 0 && [h('h2', { text: '⚠️ Lo que se hizo distinto a la receta' }),
+        h('table', { class: 'informe-tabla' },
+          h('thead', {}, h('tr', {}, ['Cuándo', 'Grupo', 'Fase', 'Qué cambió'].map((t) => h('th', { text: t })))),
+          h('tbody', {}, distintos.map((e) => h('tr', {}, h('td', { text: fechaCorta(e.fecha) }), h('td', { text: e.grupo || e.disolucion || '—' }), h('td', { text: e.fase ? K.nombreFase(e.fase) : '—' }), h('td', { text: e.distinto })))))],
       entradas.length > 0 && [h('h2', { text: '📖 Historia' }), dias.map((d) => h('section', { class: 'informe-dia' },
         h('h3', { text: d.dia }),
         d.lista.map((e) => h('div', { class: 'informe-entrada', style: colorDe(e.grupoId) ? `--gc: ${colorDe(e.grupoId)}` : null },
@@ -3097,6 +3211,7 @@
           e.disoluciones && e.disoluciones.length > 0 && h('p', { class: 'informe-meta', text: `🧪 Con ${e.disoluciones.map((x) => x.nombre).join(', ')}` }),
           e.evento && otrosDelEvento(e).length > 0 && h('p', { class: 'informe-meta', text: `👥 A la vez que ${otrosDelEvento(e).join(', ')}` }),
           e.tipo === 'comparar' && (e.de || []).length > 0 && h('p', { class: 'informe-meta', text: `De: ${e.de.join(', ')}` }),
+          e.distinto && h('p', { class: 'informe-distinto', text: `⚠️ Distinto a la receta: ${e.distinto}` }),
           e.nota && h('p', { class: 'informe-texto', text: e.nota }),
           fotosDeEntrada(e))))) ],
       ficha.notas && String(ficha.notas).trim() && [h('h2', { text: '📝 Notas del cuaderno' }), h('p', { class: 'informe-texto', text: ficha.notas })],
@@ -3129,8 +3244,10 @@
       document.body.classList.remove('imprimiendo');
     });
     let conFotos = true;
+    let conAnterior = true;
     let actual = null;
     const hoja = h('div', { class: 'informe-hoja' });
+    const hayAnterior = K.gruposDe(leerCuaderno(), amb).some((g) => g.vieneDe);
     const boton = h('button', { class: 'boton', text: '🖨️ Guardar como PDF o imprimir', onclick: async () => {
       if (!actual) return;
       boton.disabled = true;
@@ -3139,23 +3256,24 @@
       imprimirInforme(actual.el, `Informe ${ficha.nombre}`);
     } });
     const pintar = () => {
-      actual = informeDe(leerCuaderno(), receta, amb, ficha, { conFotos });
+      actual = informeDe(leerCuaderno(), receta, amb, ficha, { conFotos, conAnterior });
       poner(hoja, actual.el);
     };
     poner(cuerpo,
       h('p', { class: 'nota', text: 'Toda la historia del cuaderno, ordenada. Con «Guardar como PDF» eliges «Guardar como PDF» (o una impresora) en el cuadro que sale.' }),
       h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conFotos = e.target.checked; pintar(); } }), ' Con las fotos'),
+      hayAnterior && h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conAnterior = e.target.checked; pintar(); } }), ' Con la historia de antes (de otros cuadernos)'),
       boton,
       hoja);
     pintar();
   };
 
-  const abrirCuadernoDe = (cid, recetaIdInicial, alVolver) => {
+  const abrirCuadernoDe = (cid, recetaIdInicial, alVolver, consultaInicial = '') => {
     // ✏️ arriba: cambiar el nombre del cuaderno, su receta o de qué va (lo pone pintar)
     let editarEste = null;
     const { cuerpo, titulo, panel } = abrirPanel('📓', [h('button', { class: 'icono', 'aria-label': 'Cambiar el nombre del cuaderno', text: '✏️', onclick: () => { if (editarEste) editarEste(); } })], alVolver);
     let filtro = 'todos'; // 'todos', o el id de un grupo
-    let busqueda = ''; // lo escrito en «Buscar en la bitácora»
+    let busqueda = consultaInicial; // lo escrito en «Buscar en la bitácora» (o lo buscado en todos los cuadernos)
     let buscador = null;
     let receta = null;
     // La bitácora con lo buscado (versión 86, lo pidió el usuario). Al escribir solo se repinta la
@@ -3276,7 +3394,8 @@
         let dis = null;
         const pintarDis = () => { dis = elegirDisoluciones(leerCuaderno(), recetaDe(receta.id) || receta, fase.fase(), null, amb); poner(cajaDis, dis.el); };
         selectFase.addEventListener('change', pintarDis);
-        const zonaFase = h('div', { hidden: true }, fase.el, cajaDis);
+        const distintoVarios = campoDistinto();
+        const zonaFase = h('div', { hidden: true }, fase.el, cajaDis, distintoVarios.el);
         // Al elegir empezar o terminar, se propone la fase del primer grupo marcado (o del primero)
         const proponerFase = () => {
           const g = (filas.find((x) => x.x.checked) || filas[0]).g;
@@ -3329,6 +3448,7 @@
             ...(conFase ? { fase: f2 } : {}),
             ...(tipo === 'empezar' ? { otraVez: K.yaHizo(leerCuaderno(), g.id, f2) || undefined, muestras: g.muestras == null ? undefined : g.muestras } : {}),
             ...(usadas.length ? { disoluciones: usadas } : {}),
+            ...(tipo === 'fase' && distintoVarios.valor() ? { distinto: distintoVarios.valor() } : {}),
             grupoId: g.id, grupo: g.nombre, recetaId: receta.id, ...K.marcaDe(amb), receta: receta.nombre,
             nota, fotos, evento, ...(Number.isFinite(fecha) ? { fecha } : {}) });
         }
@@ -3417,6 +3537,12 @@
           const n = K.fotosDe(c, amb).length;
           return h('button', { class: 'boton secundario', text: n ? `🖼️ Ver las ${n === 1 ? 'fotos (1)' : `${n} fotos`} y compararlas` : '🖼️ Fotos (aún no hay ninguna)', onclick: () => abrirFotos(receta, pintar, amb) });
         })(),
+        // Lo medido (versión 114): se apunta desde cada grupo; aquí se comparan
+        (() => {
+          const t = K.medidasDe(c, amb);
+          return t.filas.length > 0 && [h('h3', { text: '📏 Medidas' }),
+            h('button', { class: 'boton secundario', text: `📏 Comparar medidas: ${t.filas.length} ${t.filas.length === 1 ? 'medida' : 'medidas'} en ${t.grupos.length} ${t.grupos.length === 1 ? 'grupo' : 'grupos'}`, onclick: () => abrirMedidas(receta, pintar, amb) })];
+        })(),
         h('h3', { text: '📖 Bitácora' }),
         grupos.length > 1 && h('div', { class: 'chips' },
           [{ id: 'todos', nombre: 'Todos' }, ...grupos].map((g) => h('button', { class: 'chip', 'aria-pressed': String(filtro === g.id), text: g.nombre, onclick: () => { filtro = g.id; pintar(); } }))),
@@ -3486,9 +3612,10 @@
       const terminar = async () => {
         const f = elegirFase(fases, K.faseParaTerminar(est, fases));
         const dis = conDisoluciones(f, true);
-        const r = await pedirApunte({ texto: `🏁 Terminar una fase · ${g.nombre}`, antes: [f.el, dis.el] });
+        const distinto = campoDistinto();
+        const r = await pedirApunte({ texto: `🏁 Terminar una fase · ${g.nombre}`, antes: [f.el, dis.el, distinto.el] });
         if (!r) return;
-        apuntar({ tipo: 'fase', fase: f.fase(), ...comun(), ...r, ...dis.elegidas() });
+        apuntar({ tipo: 'fase', fase: f.fase(), ...comun(), ...r, ...(distinto.valor() ? { distinto: distinto.valor() } : {}), ...dis.elegidas() });
         dis.guardar();
         vibrar(30);
         pintar();
@@ -3598,6 +3725,17 @@
         avisar(`📤 «${g.nombre}» pasa al cuaderno «${d.nombre}»`);
         pintar();
       };
+      // Deshacer un «pasar» sin querer (versión 114): se va el grupo nuevo y vuelven las muestras. Solo
+      // mientras el nuevo no haya apuntado nada más (K.deshacerPasar). Se llama desde cualquiera de los dos
+      const deshacerElPaso = async (nuevoId, haciaDonde) => {
+        if (!await preguntar({ texto: '¿Deshacer el paso a otro cuaderno?', peligro: true, si: 'Deshacer', no: 'Cancelar',
+          detalle: `El grupo nuevo desaparece${haciaDonde ? ` de «${haciaDonde}»` : ''} y las muestras vuelven a su grupo de origen, como estaban. Solo se puede mientras el nuevo no haya apuntado nada más.` })) return;
+        try { cambiarCuaderno((d) => K.deshacerPasar(d, nuevoId)); } catch (e) { avisar(e.message); return; }
+        vibrar(30);
+        avisar('↩️ Deshecho: las muestras vuelven a su grupo');
+        // (si estás en el grupo nuevo, ya no existe y pintar() cierra la hoja)
+        pintar();
+      };
       const separar = async () => {
         // El nombre que se propone: la primera letra que no tenga ya un grupo de esta receta
         const usados = new Set(K.gruposDe(c, ambitoDe(g)).map((x) => x.nombre));
@@ -3623,6 +3761,18 @@
         const r = await pedirApunte({ texto: `✍️ Nota · ${g.nombre}` });
         if (!r || (!r.nota && !r.fotos.length)) return;
         apuntar({ tipo: 'nota', ...comun(), ...r });
+        pintar();
+      };
+      // Una medida (versión 114): capacitancia, espesor… con su valor y unidad; se compara entre grupos
+      const medir = async () => {
+        const ed = editorMedidas([{}], leerCuaderno());
+        const r = await pedirApunte({ texto: `📏 Medida · ${g.nombre}`, antes: [ed.el], si: 'Apuntar' });
+        if (!r) return;
+        const medidas = ed.valores();
+        if (!medidas.length) { avisar('Escribe qué mides y su valor'); return; }
+        if (ed.incompletas()) avisar(`${ed.incompletas()} sin valor o sin nombre: no se ha apuntado`);
+        apuntar({ tipo: 'medida', medidas, ...comun(), ...r });
+        vibrar(30);
         pintar();
       };
       const editar = async () => {
@@ -3708,6 +3858,7 @@
             h('button', { class: 'boton secundario', text: '🔬 Muestra para analizar', onclick: analisis }),
             h('button', { class: 'boton secundario', text: '✂️ Separar muestras', onclick: separar }),
             h('button', { class: 'boton secundario', text: '🔗 Juntar con otro grupo', onclick: juntarCon }),
+            h('button', { class: 'boton secundario', text: '📏 Apuntar una medida', onclick: medir }),
             h('button', { class: 'boton secundario', text: '📤 Pasar a otro cuaderno', onclick: pasarACuaderno }),
             h('button', { class: 'boton secundario', text: '📷 Nota o fotos', onclick: nota })),
         h('h3', { text: '📖 Su historia' }),
@@ -3716,6 +3867,8 @@
           : h('p', { class: 'nota', text: 'Aún no hay nada apuntado de este grupo.' }),
         botonCopiar(`${receta.nombre} · ${g.nombre}`, historia),
         h('h3', { text: 'Más' }),
+        g.vieneDe && h('button', { class: 'boton secundario', text: '↩️ Deshacer: devolverlas a su grupo de origen', onclick: () => deshacerElPaso(g.id, g.vieneCuaderno) }),
+        g.pasadoA && h('button', { class: 'boton secundario', text: `↩️ Deshacer el paso a «${est.cuaderno}»`, onclick: () => deshacerElPaso(g.pasadoA, est.cuaderno) }),
         h('button', { class: 'boton secundario', text: '✏️ Cambiar el nombre, las muestras o lo que le toca', onclick: editar }),
         h('button', { class: 'boton discreto', text: '🗑️ Quitar el grupo', onclick: quitar }));
     };
@@ -3884,6 +4037,43 @@
   // Las fotos en una tabla (versión 95, de las ideas pendientes de las fotos): los grupos en columnas y
   // los aumentos en filas, para ver de un vistazo cómo se ve cada grupo a cada aumento. Usa el mismo
   // filtro de tipo que Fotos (de entrada, solo los análisis); tocar una foto la abre en grande
+  // Lo medido en el cuaderno, en una tabla (versión 114): una fila por lo que se mide y una columna por
+  // grupo, con lo último medido; si se midió más veces, «×N» y al tocarlo salen todas
+  const abrirMedidas = (receta, alVolver, amb = ambitoActual(receta)) => {
+    const { cuerpo } = abrirPanel('📏 Medidas', null, alVolver);
+    const pintar = () => {
+      const c = leerCuaderno();
+      const t = K.medidasDe(c, amb);
+      if (!t.filas.length) {
+        poner(cuerpo, h('p', { class: 'nota', text: 'Aún no hay medidas. Se apuntan desde cada grupo, con «📏 Apuntar una medida».' }));
+        return;
+      }
+      const colores = coloresDe(c, receta, amb);
+      const texto = (celda) => `${K.numTexto(celda.valor)}${celda.unidad ? ` ${celda.unidad}` : ''}`;
+      const verTodas = (fila, grupo, celda) => preguntar({ texto: `📏 ${fila.nombre} · ${grupo.nombre}`, no: null, si: 'Cerrar',
+        detalle: h('div', { class: 'medidas-historial' }, [...celda.todos].reverse().map((x) => h('p', {},
+          h('b', { text: `${K.numTexto(x.valor)}${x.unidad ? ` ${x.unidad}` : ''}` }), ` · ${fechaCorta(x.fecha)} ${horaDe(x.fecha)}`))) });
+      const textoPlano = () => [['', ...t.grupos.map((g) => g.nombre)].join('\t'),
+        ...t.filas.map((f) => [f.nombre, ...t.grupos.map((g) => (f.celdas[g.id] ? texto(f.celdas[g.id]) : ''))].join('\t'))].join('\n');
+      poner(cuerpo,
+        h('div', { class: 'tabla-fotos tabla-medidas' }, h('table', {},
+          h('thead', {}, h('tr', {}, h('th', { text: '📏' }),
+            t.grupos.map((g) => h('th', {}, colores.get(g.id) && h('span', { class: 'punto-grupo', style: `background: ${colores.get(g.id)}` }), g.nombre)))),
+          h('tbody', {}, t.filas.map((f) => h('tr', {}, h('th', { text: f.nombre }),
+            t.grupos.map((g) => {
+              const celda = f.celdas[g.id];
+              return h('td', { class: 'celda-medida' }, celda
+                ? h('button', { class: 'medida-valor-celda', type: 'button', onclick: () => verTodas(f, g, celda) }, h('b', { text: texto(celda) }), celda.n > 1 && h('small', { text: ` ×${celda.n}` }))
+                : h('span', { class: 'medida-vacia', text: '—' }));
+            })))))),
+        h('p', { class: 'nota', text: 'Cada columna es un grupo. Sale lo último medido; con «×2» se ha medido más veces: tócalo para verlas todas.' }),
+        h('button', { class: 'boton secundario', type: 'button', text: '📋 Copiar la tabla (para pegarla en Excel)', onclick: async () => {
+          try { await navigator.clipboard.writeText(textoPlano()); avisar('Copiada: pégala en Excel o en una hoja de cálculo'); } catch { avisar('No se ha podido copiar'); }
+        } }));
+    };
+    alLlegarCambios(cuerpo, () => pintar());
+    pintar();
+  };
   const abrirTablaFotos = (receta, alVolver, amb = ambitoActual(receta)) => {
     const { cuerpo } = abrirPanel('▦ Fotos en tabla', null, alVolver);
     const numeroDe = (a) => { const n = Number(String(a).replace(/[^\d.,]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : Infinity; };
@@ -3936,7 +4126,7 @@
   // marcadas con el círculo se comparan o se añaden a un álbum
   const abrirFotos = (receta, alVolver, amb = ambitoActual(receta)) => {
     const { cuerpo } = abrirPanel('🖼️ Fotos', null, alVolver);
-    const filtro = { grupos: new Set(), apartado: '', aumento: '' }; // vacío = todos
+    const filtro = { grupos: new Set(), apartado: '', aumento: '', tecnica: '', fase: '' }; // vacío = todos
     let album = ''; // el álbum que se está viendo ('' = todas las fotos)
     const plegadas = new Set(); // las sesiones plegadas (ids de sus apuntes)
     const pintar = () => {
@@ -3952,12 +4142,18 @@
       const grupos = [...new Map(base.filter((f) => f.entrada.grupoId).map((f) => [f.entrada.grupoId, f.entrada.grupo])).entries()];
       const apartados = [...new Set(base.map((f) => K.infoFoto(f.entrada, f.id).apartado).filter(Boolean))];
       const aumentos = [...new Set(base.map((f) => K.infoFoto(f.entrada, f.id).aumento).filter(Boolean))];
+      // La técnica (SEM, Raman…) y la fase en que estaba (versión 114: «filtrar por técnica y fase»)
+      const tecnicas = [...new Set(base.map((f) => f.entrada.tecnica).filter(Boolean))];
+      const fasesFoto = [...new Set(base.map((f) => K.faseDeEntrada(c, f.entrada)).filter(Boolean))].map((f) => K.nombreFase(f));
       for (const id of [...filtro.grupos]) if (!grupos.some(([g]) => g === id)) filtro.grupos.delete(id);
       if (!apartados.includes(filtro.apartado)) filtro.apartado = '';
       if (!aumentos.includes(filtro.aumento)) filtro.aumento = '';
+      if (!tecnicas.includes(filtro.tecnica)) filtro.tecnica = '';
+      if (!fasesFoto.includes(filtro.fase)) filtro.fase = '';
       const fotos = base.filter((f) => {
         const info = K.infoFoto(f.entrada, f.id);
-        return (!filtro.grupos.size || filtro.grupos.has(f.entrada.grupoId)) && (!filtro.apartado || info.apartado === filtro.apartado) && (!filtro.aumento || info.aumento === filtro.aumento);
+        return (!filtro.grupos.size || filtro.grupos.has(f.entrada.grupoId)) && (!filtro.apartado || info.apartado === filtro.apartado) && (!filtro.aumento || info.aumento === filtro.aumento)
+          && (!filtro.tecnica || f.entrada.tecnica === filtro.tecnica) && (!filtro.fase || K.nombreFase(K.faseDeEntrada(c, f.entrada)) === filtro.fase);
       });
       const elegidas = K.comparadas(c, amb);
       const ponerElegidas = (lista) => cambiarCuaderno((d) => { d.comparar[K.claveComparar(amb)] = lista; });
@@ -4095,7 +4291,9 @@
             grupos.map(([id, nombre]) => chip(nombre, filtro.grupos.has(id), () => { if (filtro.grupos.has(id)) filtro.grupos.delete(id); else filtro.grupos.add(id); pintar(); }, colores.get(id)))),
           h('div', { class: 'filtros-fotos' },
             elegir('📂 Apartado', 'apartado', apartados),
-            elegir('🔍 Aumento', 'aumento', aumentos)),
+            elegir('🔍 Aumento', 'aumento', aumentos),
+            elegir('🔬 Técnica', 'tecnica', tecnicas),
+            elegir('🧪 Fase', 'fase', fasesFoto)),
           !elAlbum && todas.length > 0 && h('button', { class: 'boton secundario', text: '▦ Ver en tabla: grupos × aumentos', onclick: () => abrirTablaFotos(receta, pintar, amb) }),
           fotos.length > 1 && h('div', { class: 'sesion-acciones' }, botonMarcar(fotos.map((f) => f.id), `todas las que se ven (${fotos.length})`)),
           fotos.length
