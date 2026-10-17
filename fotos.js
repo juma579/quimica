@@ -1,5 +1,6 @@
 // Las fotos del cuaderno. Se guardan en el móvil (IndexedDB: localStorage no tiene sitio para
-// fotos), como JPEG de 2000 px como mucho: una copia para verlas, no el archivo original.
+// fotos), como JPEG a toda su resolución (hasta 16 megapíxeles; versión 126, antes 2000 px), con una
+// «vista» de 2000 px y una «mini» de 400 px para enseñarlas deprisa.
 // Las .tiff (las del microscopio) el WebView no las sabe enseñar: se leen con UTIF.js (y pako, para
 // las comprimidas), que están en vendor/ y solo se cargan la primera vez que hace falta.
 //   Fotos.convertir(archivo) → { id, blob, nombre, ancho, alto }   (sin guardar)
@@ -65,6 +66,31 @@
     return cargados[src];
   };
 
+  // Lo más grande que se guarda (versión 126, lo pidió el usuario: «verlas a máxima resolución»):
+  // la foto entera, salvo que pase de 16 megapíxeles, que es lo más que puede dibujar un iPhone (y
+  // más sería mucha memoria en el móvil). Antes se guardaba de 2000 px como mucho
+  const MAX_AREA = 16000000;
+  // Reduce una imagen RGBA a la mitad, un tercio… (promediando cada cuadrado de f×f píxeles), para
+  // las .tiff enormes: dibujarlas enteras en un lienzo no se puede en un iPhone
+  const reducirRGBA = (rgba, ancho, alto, f) => {
+    const w = Math.floor(ancho / f);
+    const hgt = Math.floor(alto / f);
+    const sale = new Uint8ClampedArray(w * hgt * 4);
+    const n = f * f;
+    for (let y = 0; y < hgt; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0; let g = 0; let b = 0; let a = 0;
+        for (let dy = 0; dy < f; dy++) {
+          let i = ((y * f + dy) * ancho + x * f) * 4;
+          for (let dx = 0; dx < f; dx++, i += 4) { r += rgba[i]; g += rgba[i + 1]; b += rgba[i + 2]; a += rgba[i + 3]; }
+        }
+        const o = (y * w + x) * 4;
+        sale[o] = r / n; sale[o + 1] = g / n; sale[o + 2] = b / n; sale[o + 3] = a / n;
+      }
+    }
+    return { rgba: sale, ancho: w, alto: hgt };
+  };
+
   // TIFF: por el tipo, por el nombre o por cómo empieza el archivo ("II*\0" o "MM\0*")
   const esTiff = async (archivo) => {
     if (/tiff?$/i.test(archivo.type) || /\.tiff?$/i.test(archivo.name || '')) return true;
@@ -84,31 +110,97 @@
     const p = paginas.filter((x) => x.width && x.height).sort((a, b) => b.width * b.height - a.width * a.height)[0];
     if (!p) throw new Error('No se ha podido leer esa .tiff');
     const rgba = window.UTIF.toRGBA8(p);
+    let img = { rgba: new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, p.width * p.height * 4), ancho: p.width, alto: p.height };
+    // (más de 16 megapíxeles: se reduce antes de dibujarla)
+    if (img.ancho * img.alto > MAX_AREA) img = reducirRGBA(img.rgba, img.ancho, img.alto, Math.ceil(Math.sqrt(img.ancho * img.alto / MAX_AREA)));
     const lienzo = document.createElement('canvas');
-    lienzo.width = p.width;
-    lienzo.height = p.height;
-    lienzo.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, p.width * p.height * 4), p.width, p.height), 0, 0);
-    return { fuente: lienzo, ancho: p.width, alto: p.height };
+    lienzo.width = img.ancho;
+    lienzo.height = img.alto;
+    lienzo.getContext('2d').putImageData(new ImageData(img.rgba, img.ancho, img.alto), 0, 0);
+    return { fuente: lienzo, ancho: img.ancho, alto: img.alto };
   };
   const deImagen = async (archivo) => {
     const bmp = await createImageBitmap(archivo);
     return { fuente: bmp, ancho: bmp.width, alto: bmp.height };
   };
 
-  const convertir = async (archivo) => {
-    const img = (await esTiff(archivo)) ? await deTiff(archivo) : await deImagen(archivo);
-    const k = Math.min(1, LADO / Math.max(img.ancho, img.alto));
+  // Dibuja una imagen en un lienzo de lado máximo «lado» (con fondo blanco) y lo da como JPEG.
+  // lado: null = tan grande como se pueda (MAX_AREA)
+  const aJpeg = (fuente, ancho, alto, lado, calidad) => {
+    const k = lado ? Math.min(1, lado / Math.max(ancho, alto)) : Math.min(1, Math.sqrt(MAX_AREA / (ancho * alto)));
     const lienzo = document.createElement('canvas');
-    lienzo.width = Math.max(1, Math.round(img.ancho * k));
-    lienzo.height = Math.max(1, Math.round(img.alto * k));
+    lienzo.width = Math.max(1, Math.round(ancho * k));
+    lienzo.height = Math.max(1, Math.round(alto * k));
     const ctx = lienzo.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, lienzo.width, lienzo.height);
-    ctx.drawImage(img.fuente, 0, 0, lienzo.width, lienzo.height);
-    if (img.fuente.close) img.fuente.close();
-    const blob = await new Promise((ok, mal) => lienzo.toBlob((b) => (b ? ok(b) : mal(new Error('No se ha podido convertir la foto'))), 'image/jpeg', 0.85));
-    return { id: `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, blob, nombre: archivo.name || 'foto', ancho: lienzo.width, alto: lienzo.height, fecha: Date.now() };
+    ctx.drawImage(fuente, 0, 0, lienzo.width, lienzo.height);
+    return new Promise((ok, mal) => lienzo.toBlob((b) => (b ? ok({ blob: b, ancho: lienzo.width, alto: lienzo.height }) : mal(new Error('No se ha podido convertir la foto'))), 'image/jpeg', calidad));
   };
 
-  window.Fotos = { convertir, guardar, leer, borrar, ids, esTiff, base: BASE };
+  // La miniatura (versión 125): una copia pequeña (400 px) para las listas, las tarjetas y la galería.
+  // Antes se enseñaba la foto entera de 2000 px hasta en los cuadraditos, y con cientos de fotos el
+  // móvil gastaría mucha memoria. Las de antes se hacen la primera vez que se ven (miniaturaDe)
+  const LADO_MINI = 400;
+  // Las copias pequeñas de una foto: mini (400 px: listas, tarjetas, galería) y vista (2000 px: para
+  // verla en grande o compararla sin ampliar; versión 126). La foto entera (blob) se carga al ampliar
+  const COPIAS = { mini: [LADO_MINI, 0.8], vista: [LADO, 0.85] };
+  const copiaDeBlob = async (blob, campo) => {
+    const bmp = await createImageBitmap(blob);
+    try { return (await aJpeg(bmp, bmp.width, bmp.height, COPIAS[campo][0], COPIAS[campo][1])).blob; } finally { if (bmp.close) bmp.close(); }
+  };
+
+  const convertir = async (archivo) => {
+    const img = (await esTiff(archivo)) ? await deTiff(archivo) : await deImagen(archivo);
+    let entera;
+    let vista = null;
+    let mini;
+    try {
+      entera = await aJpeg(img.fuente, img.ancho, img.alto, null, 0.92);
+      // (la vista solo si la foto es más grande que ella; si no, la vista es la foto misma)
+      if (Math.max(entera.ancho, entera.alto) > LADO) vista = (await aJpeg(img.fuente, img.ancho, img.alto, LADO, 0.85)).blob;
+      mini = (await aJpeg(img.fuente, img.ancho, img.alto, LADO_MINI, 0.8)).blob;
+    } finally { if (img.fuente.close) img.fuente.close(); }
+    return { id: `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, blob: entera.blob, ...(vista ? { vista } : {}), mini, nombre: archivo.name || 'foto', ancho: entera.ancho, alto: entera.alto, fecha: Date.now() };
+  };
+
+  // Una copia (mini o vista) de una foto guardada: la suya o, si es de antes (o llegó del PC), se hace
+  // ahora y se le guarda. Solo si la foto sigue estando (si se ha borrado mientras tanto, no se vuelve
+  // a crear). Una foto que ya es pequeña es su propia vista
+  const copiaDe = async (id, campo) => {
+    const f = await leer(id);
+    if (!f) return null;
+    if (f[campo]) return f[campo];
+    if (campo === 'vista' && (!f.ancho || Math.max(f.ancho, f.alto || 0) <= LADO)) return f.blob;
+    let copia;
+    try { copia = await copiaDeBlob(f.blob, campo); } catch { return f.blob; }
+    const db = await abrir();
+    await new Promise((ok) => {
+      const t = db.transaction(ALMACEN, 'readwrite');
+      const s = t.objectStore(ALMACEN);
+      const p = s.get(id);
+      p.onsuccess = () => { if (p.result && !p.result[campo]) s.put({ ...p.result, [campo]: copia }); };
+      t.oncomplete = ok;
+      t.onerror = ok;
+      t.onabort = ok;
+    });
+    return copia;
+  };
+  const miniaturaDe = (id) => copiaDe(id, 'mini');
+  const vistaDe = (id) => copiaDe(id, 'vista');
+
+  // Una foto para el informe (PDF y Word; versión 141, lo pidió el usuario: «al descargar el PDF o el Word no hace
+  // falta que las fotos estén en máxima resolución»): la vista reducida a «ancho» píxeles de ancho (lo que ocupa
+  // en el papel a unos 300 ppp), en JPEG 0,85. No se guarda: se hace al hacer el informe. Da { blob, ancho, alto }
+  const paraDocumento = async (id, ancho) => {
+    const v = await vistaDe(id);
+    if (!v) return null;
+    const bmp = await createImageBitmap(v);
+    try {
+      if (bmp.width <= ancho * 1.1) return { blob: v, ancho: bmp.width, alto: bmp.height };
+      return await aJpeg(bmp, bmp.width, bmp.height, Math.round(Math.max(bmp.width, bmp.height) * ancho / bmp.width), 0.85);
+    } finally { if (bmp.close) bmp.close(); }
+  };
+
+  window.Fotos = { convertir, guardar, leer, borrar, ids, esTiff, miniaturaDe, vistaDe, paraDocumento, base: BASE, LADO };
 })();

@@ -21,6 +21,21 @@
        principal y se intercambie el puesto con recetas»). Las recetas, con 📋 (y se vuelve con atrás
        o con 📓). Lo demás (cuaderno, detalle, formulario, ajustes, preguntas) lo pone app.js por
        encima, en paneles que se cierran con el botón atrás del móvil -->
+  <!-- En el PC (pantalla ancha), una barra a la izquierda siempre a la vista (versión 136, lo pidió el
+       usuario: «mejórame muchísimo la interfaz en el PC»). En el móvil no sale: arriba van los iconos -->
+  <nav id="lateral" aria-label="Menú">
+    <div class="lateral-marca"><span class="lateral-logo">⚗️</span><span>Química</span></div>
+    <button id="l-nuevo" class="lateral-nuevo" type="button">＋ Nuevo cuaderno</button>
+    <div class="lateral-menu">
+      <button type="button" data-ir="cuadernos"><span class="lateral-icono">📓</span>Cuadernos</button>
+      <button type="button" data-ir="recetas"><span class="lateral-icono">📋</span>Recetas</button>
+      <button type="button" data-ir="calculadora"><span class="lateral-icono">🧮</span>Calculadora</button>
+      <button type="button" data-ir="ajustes"><span class="lateral-icono">⚙️</span>Ajustes</button>
+    </div>
+    <p class="lateral-titulo">Tus cuadernos</p>
+    <div id="lateral-cuadernos"></div>
+    <p id="lateral-pie" class="lateral-pie"></p>
+  </nav>
   <header class="cabecera">
     <h1 id="titulo-principal">📓 Cuadernos</h1>
     <button id="b-recetas" class="icono" aria-label="Recetas">📋</button>

@@ -250,6 +250,9 @@ Cómo montarlo:
 
   // Cuando Gemini se niega por seguridad (estado propio, no es de HTTP)
   const SEGURIDAD = 'seguridad';
+  // Cuando no contesta a tiempo (versión 125): no se vuelve a pedir (antes se pedía otra vez al mismo
+  // modelo: 5 minutos de espera y 2 peticiones del cupo, y la segunda tampoco contestaba)
+  const TIEMPO = 'tiempo';
   const FINES_DE_SEGURIDAD = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION'];
 
   // OJO: NO limitar el «pensar» (thinkingConfig / thinkingBudget). Se probó en la versión 88 y con el
@@ -289,7 +292,7 @@ Cómo montarlo:
       if (!salida) throw new ErrorIA('La IA no ha devuelto nada', 0);
       return salida;
     } catch (err) {
-      if (err.name === 'AbortError') throw new ErrorIA('La IA ha tardado demasiado', 0);
+      if (err.name === 'AbortError') throw new ErrorIA('La IA ha tardado demasiado', TIEMPO);
       if (err instanceof ErrorIA) throw err;
       throw new ErrorIA('Sin conexión', -1);
     } finally {
@@ -309,6 +312,7 @@ Cómo montarlo:
     if (err.estado === -1) return 'No hay conexión a internet: la IA la necesita';
     // (el motivo «OTHER» no es de seguridad: Gemini bloquea sin decir por qué; no sirve repetirlo)
     if (err.estado === SEGURIDAD && /\(OTHER\)/.test(err.message)) return 'Gemini ha rechazado este texto sin decir por qué. Prueba a acortarlo un poco, o escribe la receta a mano con ✍️ (las cuentas las hace la app igual).';
+    if (err.estado === TIEMPO) return 'Gemini no ha contestado en 2 minutos y medio: suele pasar cuando está muy cargado. Prueba otra vez en un rato (o escribe la receta a mano con ✍️)';
     if (err.estado === SEGURIDAD) return 'Gemini no ha querido convertir este texto por sus normas de seguridad. Puedes escribir la receta a mano con ✍️ (las cuentas las hace la app igual).';
     if (err.estado === 429) return 'Gemini ha llegado a su límite gratuito de hoy (20 peticiones al día, y los intentos con Gemini saturado también cuentan). Se renueva de madrugada';
     if (err.estado === 401 || err.estado === 403) return 'Gemini no acepta la clave: revísala en ⚙️ Ajustes';
@@ -366,6 +370,8 @@ Cómo montarlo:
           // Sin conexión o con la clave mal, los demás modelos fallarían igual
           // (ni si Gemini se niega por seguridad: se negaría otra vez, y cada intento gasta del cupo)
           if ([-1, 401, 403, SEGURIDAD].includes(err.estado)) return { error: mensajeDe(err), detalle: err.message };
+          // Sin contestar a tiempo: el siguiente intento es el mismo modelo, que tampoco contestaría
+          if (err.estado === TIEMPO) return conFallos || { error: mensajeDe(err), detalle: err.message };
           if (err.estado === 429) sinCupo.add(modelo);
           // Saturado: el siguiente de la lista es el mismo modelo, también saturado; y cada petición,
           // aunque la rechace por saturación, gasta del cupo diario. Se pasa a la siguiente vuelta

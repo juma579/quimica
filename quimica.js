@@ -258,7 +258,9 @@
   // "2,922 g"
   const cantidad = (valor, unidad) => {
     const a = ajustar(valor, unidad);
-    return a.unidad ? `${numero(a.valor)} ${a.unidad}` : numero(a.valor);
+    // («1 parte», no «1 partes»)
+    const u = a.unidad === 'partes' && a.valor === 1 ? 'parte' : a.unidad;
+    return u ? `${numero(a.valor)} ${u}` : numero(a.valor);
   };
   // Al revés que cantidad: el valor en la unidad del dato de un texto como "800 mL" o "20 mM" (que
   // pudo salir con otra unidad de la familia). Si el valor de ahora ya da ese texto, se queda (con
@@ -397,14 +399,21 @@
   // si no se divide entre nada). textos: lo que se escribe en cada hueco (nombres o números).
   // Sale de la misma "cuenta" con la que se calcula, poniendo marcas en los huecos: así lo que se
   // ve no puede ser distinto de lo que se calcula. Sin los "× 1000" de pasar unidades
-  const fraccionDe = (tipo, textos) => {
+  const marcasDe = (textos) => {
     const marcas = {};
     for (const [rol, v] of Object.entries(textos)) marcas[rol] = Array.isArray(v) ? v.map((_, i) => `§${rol}:${i}§`) : `§${rol}§`;
-    const [arriba, ...abajo] = TIPOS[tipo].cuenta(marcas).replace(/ [*/] 1000/g, '').split(' / ');
-    const escribir = (s) => s.replace(/^\((.*)\)$/, '$1').replace(/ \* /g, ' × ')
-      .replace(/§([a-z_]+)(?::(\d+))?§/g, (todo, rol, i) => String(i === undefined ? textos[rol] : textos[rol][Number(i)]));
+    return marcas;
+  };
+  const conTextos = (s, textos) => s.replace(/§([a-z_]+)(?::(\d+))?§/g, (todo, rol, i) => String(i === undefined ? textos[rol] : textos[rol][Number(i)]));
+  const fraccionDe = (tipo, textos) => {
+    const [arriba, ...abajo] = TIPOS[tipo].cuenta(marcasDe(textos)).replace(/ [*/] 1000/g, '').split(' / ');
+    const escribir = (s) => conTextos(s.replace(/^\((.*)\)$/, '$1').replace(/ \* /g, ' × '), textos);
     return { num: escribir(arriba), den: abajo.map(escribir).join(' × ') };
   };
+  // La cuenta en una línea: «a × b ÷ c». Los «× 1000» de pasar unidades se quitan ANTES de poner los
+  // textos (versión 129: antes se quitaban después, y un dato que valía justo 1000 —«1000 mL»— desaparecía:
+  // salía «0,5 g/L mL»)
+  const enUnaLinea = (tipo, textos) => conTextos(TIPOS[tipo].cuenta(marcasDe(textos)).replace(/ [*/] 1000/g, '').replace(/ \* /g, ' × ').replace(/ \/ /g, ' ÷ '), textos);
 
   // La fracción de un cálculo de tipo fijo, con los nombres de los datos; null si es de fórmula libre
   const fraccionConNombres = (c, receta) => (esFija(c) ? fraccionDe(c.tipo, textosNombres(c, receta)) : null);
@@ -413,7 +422,7 @@
   const leerFormula = (c, receta) => {
     if (!esFija(c)) return null;
     // Sin los "× 1000" de pasar unidades: de las unidades se encarga la app
-    return `${TIPOS[c.tipo].nombre}: ${TIPOS[c.tipo].cuenta(textosNombres(c, receta)).replace(/ [*/] 1000/g, '').replace(/ \* /g, ' × ').replace(/ \/ /g, ' ÷ ')}`;
+    return `${TIPOS[c.tipo].nombre}: ${enUnaLinea(c.tipo, textosNombres(c, receta))}`;
   };
 
   // Lo que va en cada hueco de un cálculo de tipo fijo, con sus números. Lo que falta por escribir
@@ -439,7 +448,7 @@
   // "0,02 M × 400 mL × 199,6 g/mol ÷ 98 %"
   const formulaConNumeros = (c, receta, resultado) => {
     if (!esFija(c)) return null;
-    return TIPOS[c.tipo].cuenta(textosNumeros(c, receta, resultado)).replace(/ [*/] 1000/g, '').replace(/ \* /g, ' × ').replace(/ \/ /g, ' ÷ ');
+    return enUnaLinea(c.tipo, textosNumeros(c, receta, resultado));
   };
 
   // Lo mismo en forma de fracción, que es como se enseña en la receta: { num, den }
@@ -815,13 +824,35 @@
       const suyos = bloques.filter((b) => nombrados.has(b.calculo.id));
       if (suyos.length) bloques = suyos;
     }
+    // Y las cuentas de las que dependen (versión 129: el usuario no podía corregir la riqueza ni la
+    // densidad del ácido nítrico de su baño, porque entran por otra cuenta —la concentración del ácido
+    // comercial— que no se nombra en los pasos; tampoco salían en «De qué está hecha»). Esas cuentas
+    // salen como «intermedio» (no es lo que se pesa o se mide)
+    const todos = bloquesPorFases(receta).flatMap((x) => x.bloques);
+    const porId = new Map(todos.map((b) => [b.calculo.id, b]));
+    const elegidos = new Set(bloques.map((b) => b.calculo.id));
+    const pila = bloques.flatMap((b) => b.usa.map((u) => u.id));
+    const intermedios = new Set();
+    while (pila.length) {
+      const id = pila.pop();
+      if (!porId.has(id) || elegidos.has(id)) continue;
+      elegidos.add(id);
+      intermedios.add(id);
+      for (const u of porId.get(id).usa) pila.push(u.id);
+    }
+    const base = bloques;
+    bloques = [...bloques, ...todos.filter((b) => intermedios.has(b.calculo.id))];
+    // (también es intermedia una de la fase que usa otra y que no sale en ningún paso)
+    const enPasos = new Set();
+    for (const p of receta.pasos || []) for (const m of String(p.texto).matchAll(/\{\s*([A-Za-z_][\w]*)\s*\}/g)) enPasos.add(m[1]);
+    for (const b of bloques) for (const u of b.usa) if (porId.has(u.id) && !enPasos.has(u.id)) intermedios.add(u.id);
     for (const b of bloques) {
       const c = b.calculo;
       vistos.add(c.id);
-      lineas.push({ id: c.id, nombre: c.nombre, texto: c.id in res.valores ? cantidad(res.valores[c.id], c.unidad) : 'no sale', cantidad: true });
+      lineas.push({ id: c.id, nombre: c.nombre, texto: c.id in res.valores ? cantidad(res.valores[c.id], c.unidad) : 'no sale', cantidad: true, ...(intermedios.has(c.id) ? { intermedio: true } : {}) });
     }
     for (const b of bloques) for (const d of [...b.nuevos, ...b.usa]) if ((receta.datos || []).includes(d)) dato(d);
-    if (bloques === f.bloques) for (const d of f.sueltos) dato(d);
+    if (base === f.bloques) for (const d of f.sueltos) dato(d);
     return lineas;
   };
   // Una copia de la receta con lo que hace falta para volver a sacar la composición de una disolución

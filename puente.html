@@ -54,7 +54,11 @@
     };
     try {
       // Que el programa sepa guardar todo lo de la app (uno viejo perdería lo nuevo)
+      const antesHola = Date.now();
       const hola = await (await pedir('/api/hola', { espera: 8000 })).json();
+      // (cuánto va el PC por delante de este aparato —esta ventana y la app tienen el mismo reloj—: la
+      // app sella sus cambios con la hora del PC; versión 126)
+      const desfase = typeof hola.ahora === 'number' && Date.now() - antesHola < 10000 ? Math.round(hola.ahora - (antesHola + Date.now()) / 2) : null;
       const sabe = Array.isArray(hola.colecciones) ? hola.colecciones : [];
       if ((d.colecciones || []).some((c) => !sabe.includes(c))) throw new Error('Química PC está desactualizado: en el PC, cierra su ventana y vuelve a abrirlo. Hasta entonces no se sincroniza, para no perder nada');
       const fotosApp = Array.isArray(d.fotos) ? d.fotos : [];
@@ -83,7 +87,7 @@
         try { info = JSON.parse(decodeURIComponent(resp.headers.get('x-foto') || '%7B%7D')); } catch { /* sin datos */ }
         traidas.push({ id, blob: await resp.blob(), nombre: info.nombre, ancho: info.ancho, alto: info.alto, fecha: info.fecha });
       }
-      contestar({ tipo: 'quimica-resultado', ok: true, estado: r.estado, fotos: traidas, enviadas: mandar.length, usuario: hola.usuario || '' });
+      contestar({ tipo: 'quimica-resultado', ok: true, estado: r.estado, fotos: traidas, enviadas: mandar.length, usuario: hola.usuario || '', desfase });
       decir('✅', 'Sincronizado con Química PC', 'Esta ventana se cierra sola. Si no, ciérrala y vuelve a la app.');
     } catch (err) {
       const mensaje = err && (err.name === 'TimeoutError' || err.name === 'TypeError') ? 'El PC no contesta. Mira que Química PC siga abierto y el móvil en la misma wifi' : String((err && err.message) || err);

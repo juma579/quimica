@@ -15,7 +15,7 @@
 // ahora y lo que ya no está pasa a borrados.
 (function (raiz) {
   'use strict';
-  const COLECCIONES = ['recetas', 'grupos', 'entradas', 'disoluciones', 'carpetas', 'cuadernos', 'albumes', 'titulos', 'comparar'];
+  const COLECCIONES = ['recetas', 'grupos', 'entradas', 'disoluciones', 'carpetas', 'cuadernos', 'albumes', 'informes', 'titulos', 'comparar'];
 
   // Una huella corta del dato (FNV-1a de 32 bits del JSON): si cambia algo, cambia la huella
   const huella = (v) => {

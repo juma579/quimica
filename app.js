@@ -100,10 +100,13 @@
   let trasCerrar = null;
   // Devuelve la capa: si se le pone retener (una función que devuelve true), "atrás" no la cierra
   // (lo usa el formulario para preguntar si se guardan los cambios)
+  // (la barra lateral del PC se repinta al abrir y cerrar capas: dice qué está abierto; la pone más abajo)
+  let pintarLateral = () => {};
   const abrirCapa = (el, alCerrar) => {
     const capa = { el, alCerrar, retener: null };
     capas.push(capa);
     history.pushState({ capa: capas.length }, '');
+    setTimeout(() => pintarLateral(), 0);
     return capa;
   };
   window.addEventListener('popstate', () => {
@@ -123,8 +126,13 @@
     const luego = trasCerrar;
     trasCerrar = null;
     if (luego) luego();
+    pintarLateral();
   });
   const atras = () => history.back();
+  // En el PC, la tecla Esc es «atrás» (cierra lo de arriba: una pregunta, un panel…) (versión 136)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && capas.length && !e.defaultPrevented) { e.preventDefault(); atras(); }
+  });
   // Cierra varias capas de golpe y después hace algo (abrir otra, por ejemplo)
   const cerrarCapas = (cuantas, luego) => {
     trasCerrar = luego || null;
@@ -299,7 +307,9 @@
       if (x && x.fotos) K.olvidarFotos(c, x.fotos);
       return x;
     });
-    for (const f of (e && e.fotos) || []) window.Fotos.borrar(f).catch(() => {});
+    // (las que sigue enseñando un informe guardado, no: versión 134)
+    const enInformes = fotosUsadas();
+    for (const f of (e && e.fotos) || []) if (!enInformes.has(f)) window.Fotos.borrar(f).catch(() => {});
   };
   const quitarGrupo = (id) => cambiarCuaderno((c) => { c.grupos = c.grupos.filter((g) => g.id !== id); });
 
@@ -313,6 +323,40 @@
     }
     return urlsFotos.get(id);
   };
+  // La miniatura (400 px; versión 125) para listas, tarjetas y galería: la foto entera solo al verla
+  // en grande, al comparar y en el informe
+  const urlsMini = new Map();
+  const urlMini = async (id) => {
+    if (!urlsMini.has(id)) {
+      const mini = await window.Fotos.miniaturaDe(id).catch(() => null);
+      // (si no sale la miniatura, la foto entera, como antes)
+      if (!mini) return urlDe(id);
+      urlsMini.set(id, URL.createObjectURL(mini));
+    }
+    return urlsMini.get(id);
+  };
+  // La vista (2000 px como mucho; versión 126) para ver una foto en grande o compararla sin ampliar;
+  // al ampliar, la foto entera (urlDe), a toda su resolución
+  const urlsVista = new Map();
+  // La foto para el informe (en la pantalla y en el PDF): con los píxeles que necesita en el papel (versión 141)
+  const urlsDocumento = new Map();
+  const urlDocumento = async (id, ancho) => {
+    const k = `${id}|${ancho}`;
+    if (!urlsDocumento.has(k)) {
+      const d = await window.Fotos.paraDocumento(id, ancho).catch(() => null);
+      if (!d) return urlVista(id);
+      urlsDocumento.set(k, URL.createObjectURL(d.blob));
+    }
+    return urlsDocumento.get(k);
+  };
+  const urlVista = async (id) => {
+    if (!urlsVista.has(id)) {
+      const v = await window.Fotos.vistaDe(id).catch(() => null);
+      if (!v) return urlDe(id);
+      urlsVista.set(id, URL.createObjectURL(v));
+    }
+    return urlsVista.get(id);
+  };
   // Ampliar una imagen dentro de su marco (lo pidió el usuario: «hacer zoom ampliando con los dedos»):
   // con dos dedos se amplía alrededor de donde están; con uno se mueve (si está ampliada); un toque
   // la amplía ×2,5 donde se toca, u otra vez a su tamaño; en el PC, la rueda del ratón. La imagen se
@@ -321,15 +365,24 @@
   // del marco), para ampliar igual otras fotos (al comparar). soloRueda: la rueda del ratón amplía
   // sin Ctrl (en la foto en grande sí; al comparar, no). Devuelve { fijar(estado) }, que pone un
   // estado sin avisar
-  const hacerZoom = (marco, img, alCambiar, soloRueda = true) => {
+  // entera (versión 126): () => promesa con la dirección de la foto entera; se pone al empezar a
+  // ampliar (hasta entonces, la vista de 2000 px). ancho/alto: los de la foto entera, para poder
+  // ampliar hasta ver cada píxel (el doble de eso, como mucho; antes, ×10 fijo)
+  const hacerZoom = (marco, img, alCambiar, soloRueda = true, op = {}) => {
     let s = 1;
     let t = { x: 0, y: 0 };
     const dedos = new Map(); // pointerId → { x, y } (dentro del marco)
     let gesto = null; // cómo estaba al empezar a mover o a pellizcar
-    const MAX = 10;
+    let MAX = 10;
+    let conEntera = !op.entera;
     const enMarco = (ev) => { const r = marco.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
     // Que la imagen no se salga: con s ≥ 1, t entre (tamaño − s·tamaño) y 0
     const ajustar = (avisar = true) => {
+      if (op.ancho && marco.clientWidth) MAX = Math.min(60, Math.max(10, 2 * Math.max(op.ancho / marco.clientWidth, (op.alto || 0) / (marco.clientHeight || 1))));
+      if (s > 1.1 && !conEntera) {
+        conEntera = true;
+        op.entera().then((u) => { if (u && img.src !== u) img.src = u; }).catch(() => {});
+      }
       s = Math.min(MAX, Math.max(1, s));
       const w = marco.clientWidth;
       const hh = marco.clientHeight;
@@ -405,7 +458,7 @@
   // La foto en grande, con su título (✏️ para cambiarlo). Se amplía con los dedos o tocándola
   // (hacerZoom); se cierra con ✕ o con atrás. alCambiar: para repintar lo de debajo si se cambia el título
   const verFoto = async (id, alCambiar) => {
-    const url = await urlDe(id).catch(() => null);
+    const url = await urlVista(id).catch(() => null);
     if (!url) { avisar('Esa foto ya no está'); return; }
     const f = await window.Fotos.leer(id);
     const c = leerCuaderno();
@@ -413,7 +466,33 @@
     const titulo = h('b', { text: entrada ? K.tituloFoto(c, id, entrada) : f.nombre });
     const img = h('img', { src: url, alt: titulo.textContent });
     const marco = h('div', { class: 'visor-marco' }, img);
-    hacerZoom(marco, img);
+    // (al ampliar, la foto entera: a toda su resolución)
+    hacerZoom(marco, img, null, true, { entera: () => urlDe(id), ancho: f.ancho, alto: f.alto });
+    // Las fotos guardadas antes de la versión 126 se reducían a 2000 px y el original no está en el
+    // aparato: se puede cambiar por el original (versión 126, lo pidió el usuario: «verlas a máxima
+    // resolución»). Es otra foto (otro id), para que llegue igual a los demás aparatos
+    // (las que se redujeron tienen el lado mayor justo de 2000 px; las más pequeñas, como las del SEM
+    // del usuario —1280 × 960—, se guardaron enteras y ya se ven a toda su resolución)
+    const reducida = f.ancho && f.alto && Math.max(f.ancho, f.alto) === window.Fotos.LADO;
+    const archivoOriginal = h('input', { type: 'file', accept: 'image/*,.tif,.tiff', hidden: true, onchange: async () => {
+      const a = archivoOriginal.files && archivoOriginal.files[0];
+      archivoOriginal.value = '';
+      if (!a) return;
+      try {
+        avisar('Preparando la foto…');
+        const nueva = await window.Fotos.convertir(a);
+        if (Math.max(nueva.ancho, nueva.alto) <= Math.max(f.ancho, f.alto)) {
+          if (!await preguntar({ texto: '¿Cambiarla igual?', detalle: `Esa foto (${nueva.ancho} × ${nueva.alto} px) no tiene más resolución que la de ahora (${f.ancho} × ${f.alto} px).`, si: 'Cambiarla', no: 'Cancelar' })) return;
+        }
+        await window.Fotos.guardar({ ...nueva, nombre: nueva.nombre || f.nombre });
+        cambiarCuaderno((d) => K.cambiarIdFoto(d, id, nueva.id));
+        await window.Fotos.borrar(id).catch(() => {});
+        for (const m of [urlsFotos, urlsMini, urlsVista]) { const u = m.get(id); if (u) { URL.revokeObjectURL(u); m.delete(id); } }
+        avisar(`✅ Cambiada por la original: ${nueva.ancho} × ${nueva.alto} px`);
+        if (alCambiar) alCambiar();
+        cerrarCapas(1, () => verFoto(nueva.id, alCambiar));
+      } catch (e) { avisar(`No se ha podido usar esa foto (${(e && e.message) || 'error'})`); }
+    } });
     // El aumento y la zona de la foto (lo pidió el usuario, para comparar al mismo aumento): un toque
     // en un aumento lo pone (otro toque lo quita); «Otro…» y la zona se escriben. Van en la entrada
     // (fotosInfo), así pasan al PC
@@ -455,7 +534,7 @@
     const fondo = h('div', { class: 'visor' },
       h('div', { class: 'visor-cabecera' },
         h('div', { class: 'visor-titulo' }, titulo,
-          entrada && h('small', { text: [entrada.grupo, K.momentoDe(c, entrada.grupoId, entrada.fecha), `${fechaCorta(entrada.fecha)} ${horaDe(entrada.fecha)}`, f.nombre].filter(Boolean).join(' · ') })),
+          entrada && h('small', { text: [entrada.grupo, K.momentoDe(c, entrada.grupoId, entrada.fecha), `${fechaCorta(entrada.fecha)} ${horaDe(entrada.fecha)}`, f.nombre, f.ancho && `${f.ancho} × ${f.alto} px`].filter(Boolean).join(' · ') })),
         entrada && h('button', { class: 'icono pequeno', 'aria-label': 'Cambiar el título', text: '✏️', onclick: async () => {
           const nuevo = await preguntar({ texto: 'Título de la foto', campo: { value: titulo.textContent, placeholder: 'Por ejemplo: SEM 5000x, grupo B tras el lavado', autocapitalize: 'sentences' }, si: 'Guardar', no: 'Cancelar' });
           if (nuevo === null) return;
@@ -467,13 +546,15 @@
         h('button', { class: 'icono', 'aria-label': 'Cerrar', text: '✕', onclick: atras })),
       entrada && cajaInfo,
       marco,
-      h('p', { class: 'visor-ayuda', text: 'Amplía con dos dedos (o tocándola) y muévela con uno' }));
+      h('p', { class: 'visor-ayuda', text: 'Amplía con dos dedos (o tocándola) y muévela con uno: al ampliar se ve a toda su resolución' }),
+      entrada && reducida && h('button', { class: 'visor-original', type: 'button', text: '📷 ¿Tienes la original con más resolución? Cámbiala', onclick: () => archivoOriginal.click() }),
+      archivoOriginal);
     document.body.append(fondo);
     abrirCapa(fondo);
   };
   const miniaturas = (ids) => (ids && ids.length ? h('div', { class: 'miniaturas' }, ids.map((id) => {
     const img = h('img', { alt: 'Foto', loading: 'lazy', decoding: 'async' });
-    urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
+    urlMini(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
     return h('button', { class: 'miniatura', 'aria-label': 'Ver la foto', onclick: () => verFoto(id) }, img);
   })) : null);
   // Para añadir fotos en una pregunta: { el, guardar() → ids }. Se preparan al elegirlas (las .tiff
@@ -842,6 +923,19 @@
         onda.stop(t + 0.4);
       }
     } catch { /* sin sonido */ }
+  };
+  // Los que se han parado con «Cancelar» en su notificación de Android, con la app cerrada o detrás
+  // (versión 124: antes la app no se enteraba, seguía contando y al final decía «terminado»)
+  const recogerCancelados = async () => {
+    if (!alarma || !alarma.cancelados) return;
+    const r = await alarma.cancelados().catch(() => null); // (una APK vieja no lo tiene)
+    const ids = r && Array.isArray(r.ids) ? r.ids : [];
+    const parados = cronometros.filter((c) => c.alarmaId != null && ids.includes(c.alarmaId));
+    if (!parados.length) return;
+    cronometros = cronometros.filter((c) => !parados.includes(c));
+    guardarCronometros();
+    pintarCronometros();
+    avisar(`⏲️ ${parados.length === 1 ? 'Parado' : `Parados ${parados.length}`} desde la notificación`);
   };
   const revisarCronometros = () => {
     const acabados = cronometros.filter((c) => c.fin <= Date.now());
@@ -1411,7 +1505,12 @@
           if (Array.isArray(v)) c.args[rol] = v.map((id) => (id === viejo ? x.id : id));
           else if (v === viejo) c.args[rol] = x.id;
         }
+        // (versión 125) y en las fórmulas propias, y en los pasos que ya lo nombraban: antes solo se
+        // cambiaba en las fórmulas de la app, y un paso con el nombre provisional quedaba roto
+        if (!Q.esFija(c) && typeof c.expr === 'string') c.expr = c.expr.replace(new RegExp(`(^|[^A-Za-z0-9_])${viejo}(?![A-Za-z0-9_])`, 'g'), `$1${x.id}`);
       }
+      for (const p of r.pasos) if (typeof p.texto === 'string') p.texto = p.texto.replace(new RegExp(`\\{\\s*${viejo}\\s*\\}`, 'g'), `{${x.id}}`);
+      if (cajaPasos) for (const t of cajaPasos.querySelectorAll('textarea')) if (t.value.includes(viejo)) t.value = t.value.replace(new RegExp(`\\{\\s*${viejo}\\s*\\}`, 'g'), `{${x.id}}`);
     };
     if (!document.getElementById('unidades-comunes')) {
       document.body.append(h('datalist', { id: 'unidades-comunes' },
@@ -2053,7 +2152,8 @@
   // { tipo, entradas }, de Q.paraCalculadora, y desde: el nombre de la receta. Así abierta, lo que
   // se escribe no se guarda: no estropea lo que hubiera en la calculadora ni cambia la receta
   const abrirCalculadora = (prellenado) => {
-    const { cuerpo } = abrirPanel('Calculadora');
+    const { cuerpo, panel: panelCalc } = abrirPanel('Calculadora');
+    panelCalc.dataset.lateral = 'calculadora';
     const guardado = leer('quimica.calculadora', {});
     const estado = prellenado ? JSON.parse(JSON.stringify(guardado)) : guardado;
     // "disolucion" es la primera opción: una disolución con uno o varios solutos (junta las fórmulas
@@ -2276,7 +2376,9 @@
   // En la caja: listas con data-lista (su valor: la carpeta, o '' sin carpeta), dentro de una zona
   // data-zona (la carpeta entera, con su título); las tarjetas, hijas directas de una lista, con data-id.
   // Al soltar: alSoltar([{ lista, ids }]), todas las listas en orden
-  const mantenerYArrastrar = (caja, alSoltar) => {
+  // rejilla (versión 135, las fotos de un informe): las tarjetas van en filas de varias; antes o después
+  // se decide por la mitad de izquierda a derecha (si no, por la de arriba abajo)
+  const mantenerYArrastrar = (caja, alSoltar, { rejilla = false } = {}) => {
     let reloj = null;
     let tarjeta = null;
     let arrastrando = false;
@@ -2304,7 +2406,8 @@
       const otra = bajo.closest('[data-id]');
       if (otra && otra !== tarjeta && otra.parentNode.hasAttribute('data-lista')) {
         const r = otra.getBoundingClientRect();
-        otra.parentNode.insertBefore(tarjeta, e.clientY > r.top + r.height / 2 ? otra.nextSibling : otra);
+        const despues = rejilla ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
+        otra.parentNode.insertBefore(tarjeta, despues ? otra.nextSibling : otra);
         return;
       }
       if (otra) return;
@@ -2322,6 +2425,7 @@
       dedo = null;
       if (!arrastrando) return;
       arrastrando = false;
+      if (rejilla) for (const l of caja.querySelectorAll('[data-lista]')) l.style.minHeight = '';
       tarjeta.classList.remove('arrastrando');
       caja.classList.remove('arrastrando-dentro');
       // El toque con el que se suelta no abre la tarjeta
@@ -2332,6 +2436,8 @@
     };
     caja.addEventListener('pointerdown', (e) => {
       const t = e.target.closest('[data-id]');
+      // (mantener pulsado un texto que se escribe es para escribir o seleccionar, no para arrastrar)
+      if (e.target.closest('.escribible')) return;
       if (!t || !caja.contains(t) || !t.parentNode.hasAttribute('data-lista') || dedo !== null) return;
       tarjeta = t;
       inicio = { x: e.clientX, y: e.clientY };
@@ -2342,6 +2448,9 @@
       document.addEventListener('touchmove', sinDesplazar, { passive: false });
       reloj = setTimeout(() => {
         arrastrando = true;
+        // (en una rejilla —las fotos del informe—, cada lista guarda su alto mientras se arrastra: si no, al pasar
+        // una foto de una figura a otra todo se movía bajo el dedo y se soltaba un sitio más allá; versión 145)
+        if (rejilla) for (const l of caja.querySelectorAll('[data-lista]')) l.style.minHeight = `${l.offsetHeight}px`;
         tarjeta.classList.add('arrastrando');
         // (mientras, las carpetas vacías enseñan dónde se puede soltar)
         caja.classList.add('arrastrando-dentro');
@@ -2404,7 +2513,7 @@
   // Una foto del almacén de fotos, para ponerla donde sea (usa urlDe, que ya la guarda en memoria)
   const imagenFoto = (id) => {
     const img = h('img', { alt: '', loading: 'lazy', decoding: 'async' });
-    urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
+    urlMini(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
     return img;
   };
   const editarFichaCuaderno = async (k, recetaInicial) => {
@@ -2475,7 +2584,7 @@
       if (cambiaReceta) {
         // Lo suyo pasa a ser de esa receta
         x.recetaId = nuevaReceta;
-        for (const y of [...d.grupos, ...d.entradas, ...d.disoluciones, ...d.carpetas, ...d.albumes]) {
+        for (const y of [...d.grupos, ...d.entradas, ...d.disoluciones, ...d.carpetas, ...d.albumes, ...(d.informes || [])]) {
           if (y.cuadernoId !== id) continue;
           y.recetaId = nuevaReceta;
           if ('receta' in y) y.receta = nuevaReceta ? nombreDeReceta(d, nuevaReceta) : null;
@@ -2534,6 +2643,7 @@
         h('p', { text: 'Aún no hay ningún cuaderno.' }),
         h('p', { class: 'nota', text: 'Cada cuaderno es un experimento: sus grupos de muestras, sus disoluciones, sus fotos y lo que vas apuntando. Crea uno con «＋ Nuevo cuaderno», o abre una receta (📋, arriba) y pulsa «🏁 Terminar fase»: se apunta en su cuaderno.' })));
     poner(caja, avisoPendientePC(), avisosDeToca(c, null, pintarCuadernos), buscador, resultados, tarjetas);
+    pintarLateral();
     verBusqueda();
   };
   const nuevoCuaderno = async () => {
@@ -2556,6 +2666,7 @@
     $('b-nueva').textContent = v === 'recetas' ? '＋ Nueva receta' : '＋ Nuevo cuaderno';
     if (v === 'cuadernos') pintarCuadernos();
     $('principal').scrollTop = 0;
+    pintarLateral();
   };
   const verRecetas = () => {
     if (vista === 'recetas') return;
@@ -2590,7 +2701,7 @@
     const cajaFotos = h('div', { class: 'apartados-editor' });
     const miniatura = (id) => {
       const img = h('img', { alt: 'Foto', loading: 'lazy', decoding: 'async' });
-      urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
+      urlMini(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
       return h('span', { class: 'miniatura con-apartado' }, img,
         h('button', { class: 'quitar-foto', type: 'button', 'aria-label': 'Quitar la foto', text: '✕', onclick: () => { quedan = quedan.filter((x) => x !== id); pintarFotos(); } }),
         aparts.length > 0 && h('select', { class: 'mover-foto', 'aria-label': 'Apartado de la foto', onchange: (ev) => { enAp.set(id, ev.target.value); pintarFotos(); } },
@@ -2818,7 +2929,9 @@
       : K.gruposDe(c, amb);
     return asignarColores(c, lista, prof);
   };
-  const arbolDeMuestras = (c, receta, abrir, amb = ambitoActual(receta), prof = 0) => {
+  // informe (versión 128): el dibujo para el informe: nombres enteros (columnas tan anchas como haga
+  // falta), sin emojis (◆ análisis, ↺ vuelta atrás, ▼ llegó de otro cuaderno) y sin el 📁 de las carpetas
+  const arbolDeMuestras = (c, receta, abrir, amb = ambitoActual(receta), prof = 0, informe = false) => {
     const r = recetaDe(receta.id);
     const fases = fasesDe(r);
     const ultimas = r ? Q.ultimasDeMuestras(r) : {};
@@ -2865,7 +2978,7 @@
     // grupo sale de ella donde se separaron; si queda a la derecha, sale del otro como una rama más
     const carpetas = K.carpetasDe(c, amb);
     const partes = carpetas.length
-      ? [...carpetas.map((k) => ({ nombre: `📁 ${k.nombre}`, grupos: K.gruposEnCarpeta(c, amb, k.id) })),
+      ? [...carpetas.map((k) => ({ nombre: informe ? k.nombre : `📁 ${k.nombre}`, grupos: K.gruposEnCarpeta(c, amb, k.id) })),
         { nombre: 'Sin carpeta', grupos: K.gruposEnCarpeta(c, amb, null) }].filter((p) => p.grupos.length)
       : [{ nombre: null, grupos }];
     const todos = new Set(grupos.map((g) => g.id));
@@ -2911,7 +3024,9 @@
     const columnaDe = (id) => columnas.findIndex((col) => col.g && col.g.id === id);
     const IZQ = 84;
     // Las columnas, más estrechas si hay muchos grupos, para que quepan en la pantalla (entre 62 y 92 px)
-    const ANCHO = Math.max(62, Math.min(92, Math.floor((Math.min(window.innerWidth, 860) - 34 - IZQ - 30) / columnas.length)));
+    // (en el informe, tan anchas como el nombre más largo: ahí no se corta ningún nombre)
+    const ANCHO = informe ? Math.max(70, Math.min(150, 7 * Math.max(...columnas.map((col) => [...col.g.nombre].length)) + 22))
+      : Math.max(62, Math.min(92, Math.floor((Math.min(window.innerWidth, 860) - 34 - IZQ - 30) / columnas.length)));
     const LETRAS = Math.max(7, Math.floor((ANCHO - 8) / 7));
     // (con carpetas, arriba va el nombre de cada una)
     const ARRIBA = carpetas.length ? 30 : 14;
@@ -3117,8 +3232,10 @@
       const abajoDel = Math.max(...tramos.map((tr) => tr.hasta));
       const repitiendo = vueltas.length > 0 && vueltas[vueltas.length - 1].abierta;
       const aLaDerecha = !repitiendo && ultimo.hasta > fin;
-      const nombreX = repitiendo ? xi - 10 : aLaDerecha ? xFin + 9 : xFin - 10;
-      const nombreY = repitiendo ? y(abajoDel) + 17 : y(fin) + (aLaDerecha ? -6 : 17);
+      // (en el informe, todos en una fila debajo del dibujo, cada uno bajo su columna: junto al final de su
+      // línea, alguno caía encima de la línea de otro grupo —versión 129, «Pos lavado» en el del usuario—)
+      const nombreX = informe ? xi - 10 : repitiendo ? xi - 10 : aLaDerecha ? xFin + 9 : xFin - 10;
+      const nombreY = informe ? y(fases.length) + 17 : repitiendo ? y(abajoDel) + 17 : y(fin) + (aLaDerecha ? -6 : 17);
       return s('g', { class: 'arbol-grupo', 'data-grupo': g.id, tabindex: 0, role: 'button', 'aria-label': `Abrir ${g.nombre}` },
         s('title', {}, `${g.nombre}${g.muestras != null ? ` · ${muestrasTexto(g.muestras)}` : ''} · ${textoEstado(est)}`),
         // La rama desde el grupo del que salió, si está a su izquierda (desde por donde iba entonces)
@@ -3158,7 +3275,7 @@
           return s('g', { class: 'arbol-vuelta', ...deQuien(g.id, v.t) },
             s('title', {}, `🔁 Volvió a «${K.nombreFase(fases[v.hasta])}»${v.abierta ? ' (la está repitiendo)' : ''}`),
             s('path', { d: `M ${punta} ${abajo} C ${fuera} ${abajo} ${fuera} ${arriba} ${punta} ${arriba}`, stroke: color, 'stroke-width': 2, 'stroke-dasharray': '4 3', fill: 'none' }),
-            s('text', { x: fuera - 13, y: (arriba + abajo) / 2 + 4, class: 'arbol-vuelta-icono' }, '🔁'));
+            s('text', { x: fuera - 13, y: (arriba + abajo) / 2 + 4, class: 'arbol-vuelta-icono' }, informe ? '↺' : '🔁'));
         }),
         iJunta >= 0 && s('g', { class: 'arbol-junta' }, s('title', {}, `Se juntó con «${est.con}»`),
           conDueno(g.id, g.juntadoDesde || 0, () => deLado(enJunta, carril.get(`j:${g.id}`) || 0, xEn(g.juntadoDesde || Infinity), x(iJunta), { stroke: color, 'stroke-dasharray': '5 4' }))),
@@ -3173,17 +3290,17 @@
             const k = `${cx}|${cy}`;
             const n2 = usados.get(k) || 0;
             usados.set(k, n2 + 1);
-            return s('text', { x: cx + 6 + 13 * n2, y: cy - 3, class: 'arbol-analisis', ...deQuien(g.id, e.fecha) }, s('title', {}, `${K.titularDe(e)} · ${fechaCorta(e.fecha)}`), '🔬');
+            return s('text', { x: cx + 6 + 13 * n2, y: cy - 3, class: 'arbol-analisis', ...deQuien(g.id, e.fecha) }, s('title', {}, `${K.titularDe(e)} · ${fechaCorta(e.fecha)}`), informe ? '◆' : '🔬');
           });
         })(),
         // El final: una raya (o ● si está en una fase) y el nombre
         est.estado === 'en'
           ? s('circle', { cx: xFin, cy: y(fin), r: 6, fill: color, ...deQuien(g.id, Infinity) })
           : s('line', { x1: xFin - 10, y1: y(fin), x2: xFin + 10, y2: y(fin), stroke: color, 'stroke-width': 4, 'stroke-linecap': 'round', ...deQuien(g.id, Infinity) }),
-        void etiquetas.push(s('g', { class: 'arbol-etiqueta', 'data-grupo': g.id, 'data-dueno': g.id, 'data-nombre': '1' }, g.vieneDe && s('text', { x: xi, y: y(0) - 5, 'text-anchor': 'middle', class: 'arbol-llegada' }, '📥', s('title', {}, `Llegó del cuaderno «${g.vieneCuaderno || 'otro'}»: su historia anterior está allí`)),
-          s('text', { x: nombreX, y: nombreY, class: 'arbol-nombre', fill: color }, `${est.estado === 'terminado' ? '✅ ' : est.estado === 'juntado' ? '🔗 ' : est.estado === 'pasado' ? '📤 ' : ''}${corto(g.nombre, est.estado === 'terminado' || est.estado === 'juntado' || est.estado === 'pasado' ? LETRAS - 2 : LETRAS)}`),
+        void etiquetas.push(s('g', { class: 'arbol-etiqueta', 'data-grupo': g.id, 'data-dueno': g.id, 'data-nombre': '1' }, g.vieneDe && s('text', { x: xi, y: y(0) - 5, 'text-anchor': 'middle', class: 'arbol-llegada' }, informe ? '▼' : '📥', s('title', {}, `Llegó del cuaderno «${g.vieneCuaderno || 'otro'}»: su historia anterior está allí`)),
+          s('text', { x: nombreX, y: nombreY, class: 'arbol-nombre', fill: color }, `${informe ? '' : est.estado === 'terminado' ? '✅ ' : est.estado === 'juntado' ? '🔗 ' : est.estado === 'pasado' ? '📤 ' : ''}${corto(g.nombre, est.estado === 'terminado' || est.estado === 'juntado' || est.estado === 'pasado' ? LETRAS - 2 : LETRAS)}`),
         // (en corto, para que no se monte con el de al lado; un grupo juntado ya no tiene)
-        g.muestras != null && est.estado !== 'juntado' && est.estado !== 'pasado' && s('text', { x: nombreX, y: nombreY + 14, class: 'arbol-muestras' }, `🧫 ${g.muestras}`))),
+        g.muestras != null && est.estado !== 'juntado' && est.estado !== 'pasado' && s('text', { x: nombreX, y: nombreY + 14, class: 'arbol-muestras' }, informe ? `n = ${g.muestras}` : `🧫 ${g.muestras}`))),
         // Una zona invisible ancha, para que sea fácil tocarlo
         s('rect', { x: xi - 14, y: y(arribaDel) - 6, width: ANCHO - 8 + 13 * vueltas.length, height: y(abajoDel) - y(arribaDel) + 44, fill: 'transparent' }));
     });
@@ -3243,140 +3360,1140 @@
     return zona;
   };
 
-  // Un cuaderno. Con receta: su árbol, sus grupos (al tocar uno, lo que se puede hacer con él), sus
-  // disoluciones, sus fotos y su bitácora; sin receta: solo notas y fotos. A la derecha, la pestaña
-  // de las notas libres (abrirNotas). alVolver: para repintar la lista de antes
-  // ─── El informe de un cuaderno (versión 86, lo pidió el usuario: «toda la historia de un cuaderno
-  // en un documento ordenado», para la memoria o para el tutor) ───
-  // Se ve en la app y se guarda como PDF con «🖨️» (en Android, con el plugin Imprimir; en el PC y en
-  // el iPhone, con la impresión del navegador). Devuelve { el, listo } (listo: cuando ya están las fotos)
-  const informeDe = (c, receta, amb, ficha, { conFotos, conAnterior = true, conReceta = true }) => {
-    const esperas = [];
-    // La receta, copiada (versión 121, lo pidió el usuario): sus datos y cantidades con los números de
-    // ahora, y los pasos con esas cantidades puestas
-    const rec = conReceta && receta && receta.id ? recetaDe(receta.id) : null;
-    const seccionReceta = () => {
-      if (!rec) return null;
-      const res = Q.calcular(rec);
-      const valorDe = (x) => (x.id in res.valores ? Q.cantidad(res.valores[x.id], x.unidad) : '—');
-      return h('section', { class: 'informe-receta' },
-        h('h2', { text: `📋 La receta: ${rec.nombre}` }),
-        rec.resumen && h('p', { text: rec.resumen }),
-        rec.seguridad && h('p', { text: `⚠️ Seguridad: ${rec.seguridad}` }),
-        rec.notas && h('p', { text: `📝 ${rec.notas.split('\n').filter(Boolean).join(' · ')}` }),
-        rec.datos.length > 0 && [h('h3', { text: 'Datos' }),
-          h('table', { class: 'informe-tabla' }, h('tbody', {}, rec.datos.map((d) => h('tr', {}, h('td', { text: d.nombre }), h('td', { class: 'informe-numero', text: valorDe(d) })))))],
-        rec.calculos.length > 0 && [h('h3', { text: 'Cantidades calculadas' }),
-          h('table', { class: 'informe-tabla' }, h('tbody', {}, rec.calculos.map((x) => h('tr', {}, h('td', { text: x.nombre }), h('td', { class: 'informe-numero', text: valorDe(x) })))))],
-        rec.pasos.length > 0 && [h('h3', { text: 'Pasos' }),
-          rec.pasos.map((p, i) => [
-            p.titulo && h('p', { class: 'informe-fase', text: p.titulo }),
-            p.subfase && h('p', { class: 'informe-subfase', text: `${p.parte === 'disolucion' ? '🧪' : '🧫'} ${p.subfase}` }),
-            h('p', { class: 'informe-paso' }, h('b', { text: `${i + 1}. ` }), Q.trozosPaso(p.texto, rec, res).map((t) => t.texto).join(''),
-              p.minutos ? ` ⏲️ ${Q.duracion(p.minutos)}` : '', p.ciclos ? ` 🔁 ${p.ciclos} ciclos` : '')])]);
-    };
-    const grupos = receta ? K.gruposDe(c, amb) : [];
-    const entradas = c.entradas.filter((e) => K.casa(e, amb)).map((e) => conNombresDeAhora(c, e)).sort((a, b) => a.fecha - b.fecha);
-    const disoluciones = receta ? [...K.disolucionesDe(c, amb)].sort((a, b) => a.fecha - b.fecha) : [];
-    const arbol = receta && grupos.length ? arbolDeMuestras(c, receta, () => {}, amb) : null;
-    const coloresInforme = arbol ? arbol.colores : (receta && grupos.length ? coloresSinArbol(c, amb) : new Map());
-    const colorDe = (id) => coloresInforme.get(id) || null;
-    const fechaLarga = (ms) => new Date(ms).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
-    let nFoto = 0;
-    const foto = (e, id) => {
-      const img = h('img', { alt: '' });
-      esperas.push(urlDe(id).then((u) => { if (u) { img.src = u; return img.decode().catch(() => {}); } img.alt = '(foto borrada)'; return null; }).catch(() => {}));
-      const info = K.infoFoto(e, id);
-      return h('figure', { class: 'informe-foto' }, img,
-        h('figcaption', { text: [`Foto ${++nFoto}`, c.titulos[id], info.aumento, info.zona].filter(Boolean).join(' · ') }));
-    };
-    const fotosDeEntrada = (e) => {
-      if (!conFotos || !(e.fotos || []).length) return null;
-      return K.apartadosDe(e).map((a) => [a.titulo && h('p', { class: 'informe-apartado', text: `📂 ${a.titulo}` }),
-        h('div', { class: 'informe-fotos' }, a.fotos.map((id) => foto(e, id)))]);
-    };
-    // Lo que ha ido haciendo cada grupo, en una línea por cosa (lo suyo, sin lo heredado)
-    const hitos = (g) => entradas.filter((e) => e.grupoId === g.id && ['empezar', 'fase', 'analisis', 'separar', 'juntar', 'recibir', 'medida', 'pasar', 'llegar'].includes(e.tipo))
-      .map((e) => `${fechaCorta(e.fecha)}: ${K.titularDe(e)}`);
-    // Lo medido, en una tabla (versión 114): una fila por lo que se mide y una columna por grupo
-    const medidas = receta ? K.medidasDe(c, amb) : { grupos: [], filas: [] };
-    const dias = [];
+  // ─── El informe de un cuaderno ───
+  // Versión 86 (lo pidió el usuario: «toda la historia de un cuaderno en un documento ordenado», para la
+  // memoria o para el tutor). Versión 127 (el usuario: «mejorar el informe para que sea más científico y
+  // formal, y que luego lo pueda editar, añadir cosas…»): con la forma de un informe científico —portada,
+  // resumen, 1. Introducción, 2. Objetivos, 3. Materiales y métodos, 4. Resultados, 5. Discusión,
+  // 6. Conclusiones, referencias y anexos—, tablas y figuras numeradas con su pie, y sin emojis. Lo que
+  // escribe el usuario (título, autores, resumen, introducción…) va en la ficha del cuaderno
+  // (ficha.informe: pasa al PC con ella). Se guarda en PDF (🖨️) o en Word (.docx, para seguir editándolo).
+  // Primero se hace el «modelo» (modeloInforme: una lista de bloques) y luego se dibuja en la pantalla
+  // (informeHtml, que es lo que se imprime) o se pasa a Word (informeDocx): así los dos dicen lo mismo.
+  const TEXTOS_INFORME = [
+    ['titulo', 'Título', 'Por ejemplo: Recubrimiento de fibra de carbono con GNP y crecimiento de CuO', 0],
+    ['autores', 'Autor o autores', 'Nombre y apellidos', 0],
+    ['institucion', 'Centro, departamento o grupo', 'Por ejemplo: Universidad de…, Departamento de…', 0],
+    ['resumen', 'Resumen', 'En pocas líneas: qué se hizo, cómo y qué salió', 4],
+    ['introduccion', 'Introducción', 'El contexto: por qué se hace este trabajo', 5],
+    ['objetivos', 'Objetivos', 'Qué se quería conseguir (uno por línea)', 3],
+    ['discusion', 'Discusión', 'Qué significan los resultados: comparación entre grupos, problemas, explicaciones…', 6],
+    ['conclusiones', 'Conclusiones', 'Lo principal (una por línea)', 4],
+    ['referencias', 'Referencias', 'Una por línea (artículos, protocolos, fichas técnicas…)', 3],
+  ];
+  // Sin emojis (en un informe formal no van): «🔬 Microscopio electrónico» → «Microscopio electrónico»
+  const sinEmoji = (s) => String(s == null ? '' : s)
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '')
+    .replace(/\s+/g, ' ').trim();
+  // (lo mismo, pero respetando los saltos de línea)
+  const sinEmojiLineas = (s) => String(s == null ? '' : s).split('\n').map(sinEmoji).filter(Boolean).join('\n');
+  const fechaLargaDe = (ms) => new Date(ms).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+  // ── Lenguaje formal (versión 128: el usuario, sobre el informe de la 127: «no me gusta cómo quedan,
+  // ¿tú publicarías así un informe?»; hablaba como la app —«Empieza», «Terminada», «Juntado con», «16 sept»—) ──
+  const fechaNum = (ms) => new Date(ms).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const fasesNombre = (f) => sinEmoji(K.nombreFase(f));
+  const muestrasDe = (n) => (n != null ? ` (${n} ${n === 1 ? 'muestra' : 'muestras'})` : '');
+  // Lo que se hizo en un apunte, dicho como en un informe
+  const actividadFormal = (e) => {
+    switch (e.tipo) {
+      case 'empezar': return `${e.otraVez ? 'Repetición' : 'Inicio'} de ${fasesNombre(e.fase)}${muestrasDe(e.muestras)}`;
+      case 'fase': return `Fin de ${fasesNombre(e.fase)}${e.subfase ? ` (${e.subfase})` : ''}${muestrasDe(e.muestras)}`;
+      case 'analisis': return `Caracterización: ${e.tecnica || 'análisis'}`;
+      case 'separar': return `Separación de ${e.cuantas} ${e.cuantas === 1 ? 'muestra' : 'muestras'} al grupo ${e.nuevo}`;
+      case 'juntar': return `Unión al grupo ${e.nuevo}${muestrasDe(e.cuantas)}`;
+      case 'recibir': return `Incorporación de ${e.cuantas != null ? `${e.cuantas} ${e.cuantas === 1 ? 'muestra' : 'muestras'} ` : 'las muestras '}del grupo ${e.desde}`;
+      case 'medida': return `Medida: ${K.lineasDeMedidas(e.medidas) || '—'}`;
+      case 'pasar': return `Traslado${muestrasDe(e.cuantas)} al cuaderno ${e.haciaCuaderno || 'siguiente'}`;
+      case 'llegar': return `Recepción${muestrasDe(e.cuantas)} desde el cuaderno ${e.deCuaderno || 'anterior'}`;
+      case 'preparar': return `Preparación de la disolución ${e.disolucion}`;
+      case 'comparar': return `Comparación de ${(e.comparadas || []).length} imágenes`;
+      case 'estado': return `Cambio de estado: ${sinEmoji(K.ESTADOS[e.estado] || e.estado || '').toLowerCase()}`;
+      default: return 'Observación';
+    }
+  };
+  // Cómo quedó un grupo, dicho como en un informe
+  const estadoFormal = (est) => {
+    switch (est.estado) {
+      case 'nada': return 'Sin iniciar';
+      case 'en': return `En curso: ${fasesNombre(est.fase)}`;
+      case 'terminado': return `Completado (${fechaNum(est.fecha)})`;
+      case 'juntado': return `Unido al grupo ${est.con} (${fechaNum(est.fecha)})`;
+      case 'pasado': return `Trasladado al cuaderno ${est.cuaderno} (${fechaNum(est.fecha)})`;
+      default: return `${fasesNombre(est.fase)} completada${est.siguiente !== undefined ? `; pendiente: ${fasesNombre(est.siguiente)}` : ''}`;
+    }
+  };
+  // «Fase 2: Lavado» → «Fase 2» (para las listas cortas de la tabla de seguimiento)
+  const faseCorta = (f) => { const m = /^\s*fase\s*\d+/i.exec(f || ''); return m ? m[0].trim().replace(/^fase\s*/i, 'F') : fasesNombre(f); };
+
+  // El nombre del trabajo: el del cuaderno o, si es el genérico («Cuaderno 1»), el de su receta
+  const nombreDelTrabajo = (ficha, receta) => (/^Cuaderno \d+$/.test(ficha.nombre || '') && receta && receta.id ? receta.nombre : ficha.nombre);
+
+  // ── Piezas comunes del informe y del texto para una IA (versión 129). El usuario: «repetir qué pasos
+  // has hecho en cada una, si es todo igual, no tiene sentido; con poner una basta; en lo que cambia,
+  // sí apuntarlo para esa muestra». Cada apunte es de un solo grupo (el que lo tenía entonces): la
+  // historia «propia» de un grupo es solo lo suyo, y lo de antes de separarse está en el grupo del que
+  // salió. Así no se repite nada y no se pierde nada ──
+  const fechaHoraNum = (ms) => `${fechaNum(ms)} ${horaDe(ms)}`;
+  // La receta de un cuaderno (o una vacía, si no tiene)
+  const recetaDeAmbito = (amb, ficha) => (amb.recetaId && recetaDe(amb.recetaId))
+    || { id: null, nombre: ficha.nombre, pasos: [], datos: [], calculos: [], sinReceta: true };
+  // Una parte del informe: un cuaderno, con su ficha y su receta
+  const parteDe = (c, amb) => { const ficha = K.fichaCuaderno(c, amb); return { amb, ficha, receta: recetaDeAmbito(amb, ficha) }; };
+  // Los cuadernos unidos a este por muestras que pasaron de uno a otro (en los dos sentidos y en cadena):
+  // [{ parte, vienen, van }] (cuántos grupos vinieron de él o fueron a él)
+  const cuadernosRelacionados = (c, amb) => {
+    const clave = (a) => a.cuadernoId;
+    const vistos = new Map([[clave(amb), null]]);
+    const pendientes = [amb];
+    const salida = [];
+    while (pendientes.length) {
+      const a = pendientes.shift();
+      for (const g of K.gruposDe(c, a)) {
+        const enlaces = [];
+        const o = g.vieneDe && K.grupoDe(c, g.vieneDe);
+        if (o) enlaces.push({ otro: ambitoDe(o), tipo: 'vienen' });
+        for (const d of c.grupos.filter((x) => x.vieneDe === g.id)) enlaces.push({ otro: ambitoDe(d), tipo: 'van' });
+        for (const { otro, tipo } of enlaces) {
+          if (!vistos.has(clave(otro))) {
+            const x = { parte: parteDe(c, otro), vienen: 0, van: 0 };
+            vistos.set(clave(otro), x);
+            salida.push(x);
+            pendientes.push(otro);
+          }
+          const x = vistos.get(clave(otro));
+          if (x && a === amb) x[tipo]++;
+        }
+      }
+    }
+    return salida;
+  };
+  // Cuántas muestras tenía un grupo al formarse
+  const muestrasAlEmpezar = (c, g) => {
+    if (g.padre) { const e = c.entradas.find((x) => x.tipo === 'separar' && x.nuevoId === g.id); if (e && e.cuantas != null) return e.cuantas; }
+    if (g.vieneDe) { const e = c.entradas.find((x) => x.tipo === 'llegar' && x.grupoId === g.id); if (e && e.cuantas != null) return e.cuantas; }
+    const e = c.entradas.filter((x) => x.grupoId === g.id && x.muestras != null).sort((a, b) => a.fecha - b.fecha)[0];
+    return e ? e.muestras : g.muestras;
+  };
+  // Los grupos en el orden de su familia: cada uno seguido de los que salieron de él. [{ g, nivel }]
+  const ordenFamilia = (grupos) => {
+    const ids = new Set(grupos.map((g) => g.id));
+    const hijos = new Map();
+    const raices = [];
+    for (const g of grupos) {
+      if (g.padre && ids.has(g.padre)) { if (!hijos.has(g.padre)) hijos.set(g.padre, []); hijos.get(g.padre).push(g); } else raices.push(g);
+    }
+    const lista = [];
+    const visita = (g, nivel) => { lista.push({ g, nivel }); for (const x of (hijos.get(g.id) || []).sort((a, b) => (a.desde || 0) - (b.desde || 0))) visita(x, nivel + 1); };
+    for (const g of raices) visita(g, 0);
+    return lista;
+  };
+  // Los apuntes de una lista, con las pasadas por una fase juntas: el «empezar» y el «terminar» (y sus
+  // subfases) de una misma vez son una sola cosa. Lo demás, cada apunte tal cual. ultimas: la última
+  // subfase de muestras de cada fase (terminarla es terminar la fase)
+  const conPasadas = (entradas, ultimas = {}) => {
+    const items = [];
+    let p = null;
     for (const e of entradas) {
-      const d = diaDe(e.fecha);
-      if (!dias.length || dias[dias.length - 1].dia !== d) dias.push({ dia: d, lista: [] });
-      dias[dias.length - 1].lista.push(e);
+      if (e.tipo !== 'empezar' && e.tipo !== 'fase') { items.push({ tipo: e.tipo, fecha: e.fecha, e }); continue; }
+      if (!p || p.fase !== e.fase || (e.tipo === 'empezar' && p.terminada)) {
+        p = { tipo: 'pasada', fase: e.fase, fecha: e.fecha, desdeElPrincipio: e.tipo === 'empezar', fin: null, terminada: false, muestras: null, subfases: [], disoluciones: [], notas: [], distinto: [], fotos: [], entradas: [] };
+        items.push(p);
+      }
+      p.entradas.push(e);
+      if (p.muestras == null && e.muestras != null) p.muestras = e.muestras;
+      if (e.tipo === 'fase') {
+        p.fin = e.fecha;
+        if (e.subfase) p.subfases.push({ nombre: e.subfase, fecha: e.fecha });
+        if (!e.subfase || ultimas[e.fase] === undefined || ultimas[e.fase] === e.subfase) p.terminada = true;
+      }
+      for (const d of e.disoluciones || []) if (!p.disoluciones.some((x) => x.id === d.id)) p.disoluciones.push(d);
+      if (e.nota) p.notas.push(e.nota);
+      if (e.distinto) p.distinto.push(e.distinto);
+      p.fotos.push(...(e.fotos || []));
+    }
+    return items;
+  };
+  const ultimasDe = (g) => { const r = recetaDe(g.recetaId); return r ? Q.ultimasDeMuestras(r) : {}; };
+  // La historia propia de un grupo: [item] (pasadas con su «vez»: 2.ª vez si ya la había hecho, contando
+  // lo heredado del grupo del que salió)
+  const historiaPropia = (c, g) => {
+    const ultimas = ultimasDe(g);
+    const orden = (a, b) => a.fecha - b.fecha;
+    const propias = c.entradas.filter((e) => e.grupoId === g.id).map((e) => conNombresDeAhora(c, e)).sort(orden);
+    const todas = conPasadas(K.historiaDe(c, g.id).slice().sort(orden), ultimas).filter((x) => x.tipo === 'pasada');
+    const items = conPasadas(propias, ultimas);
+    const pasadas = items.filter((x) => x.tipo === 'pasada');
+    for (const p of pasadas) {
+      p.vez = todas.filter((x) => x.fase === p.fase && x.fecha <= p.fecha).length || 1;
+    }
+    // (sin terminar: «en curso» solo si el grupo sigue en ella; si se unió a otro o pasó a otro cuaderno, no)
+    const est = estadoGrupo(c, g);
+    const ultima = pasadas[pasadas.length - 1];
+    if (ultima && !ultima.terminada) ultima.enCurso = est.estado === 'en' && est.fase === ultima.fase;
+    return items;
+  };
+  // ── Los grupos finales y en qué se apartaron del procedimiento (versión 149; lo propuso el usuario: «¿no es un
+  // poco lioso poner toda la historia de los grupos? ¿no sería mejor poner solo lo que cambió cada grupo respecto
+  // de su receta original, y que sean solo los grupos finalistas?») ──
+  // Un grupo final: el que llegó al final del trabajo (sigue con muestras, o pasó a otro cuaderno); no los que se
+  // unieron a otro ni los que se repartieron entero en otros grupos
+  const esGrupoFinal = (c, g) => {
+    const est = estadoGrupo(c, g).estado;
+    if (est === 'juntado') return false;
+    return est === 'pasado' || (g.muestras || 0) > 0;
+  };
+  // Las muestras con las que acabó: las que le quedan o, si pasó a otro cuaderno, las que pasaron
+  const muestrasFinales = (c, g) => {
+    if (estadoGrupo(c, g).estado !== 'pasado') return g.muestras;
+    const e = c.entradas.filter((x) => x.tipo === 'pasar' && x.grupoId === g.id).sort((a, b) => b.fecha - a.fecha)[0];
+    return e && e.cuantas != null ? e.cuantas : g.muestras;
+  };
+  // (la nota que apunta «🧮 Corregir los números» es un registro de la corrección, no una observación; versión 150)
+  const esNotaDeCorreccion = (n) => /^\s*🧮 Números corregidos/.test(n || '');
+  // El pH que dice una disolución (en sus notas o en lo apuntado al prepararla): el último que se nombra
+  const phDe = (c, d) => {
+    const textos = [d.preparada, ...c.entradas.filter((e) => e.disolucionId === d.id && e.nota && !esNotaDeCorreccion(e.nota)).sort((a, b) => a.fecha - b.fecha).map((e) => e.nota)].filter(Boolean);
+    // («pH 6.4» o «6.02 ph», en cada texto por separado —si no, «400» de lo apuntado y «Ph 6.4» de la nota daban
+    // «pH 400»—, y solo de 0 a 14)
+    const l = [];
+    for (const t of textos) {
+      const delante = [...t.matchAll(/\bp\s?h\s*[:=]?\s*(\d{1,2}(?:[.,]\d+)?)/gi)].map((m) => m[1]);
+      const detras = delante.length ? [] : [...t.matchAll(/(\d{1,2}(?:[.,]\d+)?)\s*p\s?h\b/gi)].map((m) => m[1]);
+      l.push(...[...delante, ...detras].filter((v) => Number(v.replace(',', '.')) <= 14));
+    }
+    return l.length ? l[l.length - 1].replace('.', ',') : null;
+  };
+  // Lo observado de una disolución (lo apuntado al prepararla, si no es una cantidad, y sus notas)
+  const observadoDe = (c, d) => [d.preparada && !/^\s*\d+([.,]\d+)?\s*$/.test(d.preparada) ? d.preparada : null,
+    ...c.entradas.filter((e) => e.disolucionId === d.id && e.nota && !esNotaDeCorreccion(e.nota)).sort((a, b) => a.fecha - b.fecha).map((e) => e.nota)].filter(Boolean).map(sinEmoji);
+  // Lo de su composición distinto de la receta (concentraciones, purezas, densidades, riquezas; no volúmenes ni
+  // masas, que cambian con la cantidad que se prepara)
+  const distintoDeLaReceta = (d, receta) => {
+    if (!receta) return [];
+    return (d.composicion || []).filter((x) => !x.intermedio && !/\s(?:[µm]?L|[µmk]?g)$|partes?$/.test(x.texto || '')).map((x) => {
+      const dato = receta.datos.find((y) => (x.id && y.id === x.id) || y.nombre === x.nombre);
+      if (!dato || dato.valor == null) return null;
+      const ahora = Q.cantidad(dato.valor, dato.unidad);
+      return ahora !== x.texto ? `${x.nombre.charAt(0).toLowerCase()}${x.nombre.slice(1)} ${x.texto} (receta: ${ahora})` : null;
+    }).filter(Boolean);
+  };
+  // { recorrido: 'F0, F1, F2, F1, F2…', lista: [diferencia] }, contando lo heredado del grupo del que salió
+  const variacionesDe = (c, g) => {
+    const receta = recetaDe(g.recetaId);
+    const fases = fasesDe(receta);
+    const historia = K.historiaDe(c, g.id).slice().sort((a, b) => a.fecha - b.fecha).map((e) => conNombresDeAhora(c, e));
+    const pasadas = conPasadas(historia, ultimasDe(g)).filter((x) => x.tipo === 'pasada');
+    const lista = [];
+    const medidas = [];
+    const veces = new Map();
+    for (const p of pasadas) veces.set(p.fase, (veces.get(p.fase) || 0) + 1);
+    const repetidas = fases.filter((f) => (veces.get(f) || 0) > 1).map((f) => `${faseCorta(f)} (${veces.get(f)} veces)`);
+    if (repetidas.length) lista.push(`Repitió ${repetidas.join(', ')}`);
+    const sinHacer = fases.filter((f) => !veces.has(f)).map(faseCorta);
+    if (sinHacer.length) lista.push(`No realizó ${sinHacer.join(', ')}`);
+    const vistas = new Set();
+    for (const p of pasadas) {
+      for (const x of p.disoluciones) {
+        if (vistas.has(x.id)) continue;
+        vistas.add(x.id);
+        const d = (c.disoluciones || []).find((y) => y.id === x.id);
+        if (!d) continue;
+        // (lo de su composición distinto de la receta es una diferencia; el pH, o lo observado si no dice pH, es una
+        // medición: va en su columna —versión 150, lo dijo el usuario: «lo del pH debería ser una observación, o medición»)
+        const cambios = distintoDeLaReceta(d, receta);
+        if (cambios.length) lista.push(`${faseCorta(p.fase)} con ${sinEmoji(d.nombre)}: ${cambios.join('; ')}`);
+        const ph = phDe(c, d);
+        const obs = ph ? [`pH ${ph}`] : observadoDe(c, d);
+        if (obs.length) medidas.push(`${faseCorta(p.fase)}, ${sinEmoji(d.nombre)}: ${obs.join('; ')}`);
+      }
+      for (const t of p.distinto) lista.push(`${faseCorta(p.fase)}: ${sinEmoji(t)}`);
+    }
+    for (const e of historia) {
+      if (e.tipo !== 'empezar' && e.tipo !== 'fase' && e.distinto) lista.push(sinEmoji(e.distinto));
+      if (e.tipo === 'recibir') lista.push(`${actividadFormal(e)}${e.nota ? `: ${sinEmoji(e.nota)}` : ''}`);
+      // (las medidas apuntadas en el grupo —capacitancia, espesor…—, también en su columna)
+      if (e.tipo === 'medida') for (const m of e.medidas || []) medidas.push(`${m.nombre} ${K.numTexto(m.valor)}${m.unidad ? ` ${m.unidad}` : ''}`);
+    }
+    return { recorrido: pasadas.map((p) => `${faseCorta(p.fase)}${p.terminada ? '' : ' (sin terminar)'}`).join(', '), lista, medidas };
+  };
+  // Un item, dicho como en un informe: { cuando, que, detalles: [texto] }. figuras: id de apunte → «Figuras 3–5»
+  const textoItem = (c, it, { figuras } = {}) => {
+    const notas = (l) => l.map((x) => sinEmoji(x)).filter(Boolean);
+    if (it.tipo === 'pasada') {
+      const cuando = it.fin == null ? `desde el ${fechaHoraNum(it.fecha)}`
+        : !it.desdeElPrincipio ? `hasta el ${fechaHoraNum(it.fin)}`
+          : it.fin - it.fecha < 60000 ? fechaHoraNum(it.fecha) : `${fechaHoraNum(it.fecha)} – ${fechaHoraNum(it.fin)}`;
+      const que = `${fasesNombre(it.fase)}${it.vez > 1 ? ` (${it.vez}.ª vez)` : ''}${!it.desdeElPrincipio ? ' (iniciada antes, en el grupo de procedencia)' : ''}${!it.terminada ? (it.enCurso ? ' (en curso)' : ' (sin final registrado)') : ''}`;
+      return { cuando, que, detalles: [
+        it.muestras != null && muestrasTexto(it.muestras),
+        it.disoluciones.length > 0 && `Disolución empleada: ${it.disoluciones.map((x) => x.nombre).join(', ')}`,
+        it.subfases.length > 0 && `Etapas completadas: ${it.subfases.map((s) => `${sinEmoji(s.nombre)} (${fechaHoraNum(s.fecha)})`).join('; ')}`,
+        ...it.distinto.map((x) => `Modificación respecto al procedimiento: ${sinEmoji(x)}`),
+        ...notas(it.notas),
+        it.fotos.length > 0 && `${it.fotos.length} ${it.fotos.length === 1 ? 'imagen' : 'imágenes'}`,
+      ].filter(Boolean) };
+    }
+    const e = it.e;
+    const otros = e.evento ? c.entradas.filter((x) => x.evento === e.evento && x.id !== e.id).map((x) => { const g = K.grupoDe(c, x.grupoId); return g ? g.nombre : x.grupo; }).filter(Boolean) : [];
+    const f = figuras && figuras.get(e.id);
+    const fig = f && (f.desde === f.hasta ? `⟦F:f${f.desde}⟧` : `⟦FS:f${f.desde}:f${f.hasta}⟧`);
+    return { cuando: `${fechaHoraNum(e.fecha)}${e.aprox ? ' (fecha aproximada)' : ''}`, que: actividadFormal(e), detalles: [
+      e.tipo === 'preparar' && e.preparada && `Cantidad preparada: ${e.preparada}`,
+      (e.disoluciones || []).length > 0 && `Disolución empleada: ${e.disoluciones.map((x) => x.nombre).join(', ')}`,
+      otros.length > 0 && `Simultáneo con: ${otros.join(', ')}`,
+      e.tipo === 'comparar' && (e.de || []).length > 0 && `Imágenes de: ${e.de.join(', ')}`,
+      e.distinto && `Modificación respecto al procedimiento: ${sinEmoji(e.distinto)}`,
+      sinEmoji(e.nota),
+      (e.fotos || []).length > 0 && `${e.fotos.length} ${e.fotos.length === 1 ? 'imagen' : 'imágenes'}${fig ? ` (${fig})` : ''}`,
+    ].filter(Boolean) };
+  };
+  // Lo que pasó con una disolución (preparar, notas, cambios de estado): [item]
+  const historiaDisolucionPropia = (c, d) => c.entradas.filter((e) => e.disolucionId === d.id).sort((a, b) => a.fecha - b.fecha).map((e) => ({ tipo: e.tipo, fecha: e.fecha, e }));
+  // Quién la usó y en qué fase: «2c ph 8.4 (Fase 4, 06/10/2026)»
+  const empleoDe = (c, d) => {
+    const usos = c.entradas.filter((e) => e.grupoId && (e.disoluciones || []).some((x) => x.id === d.id)).sort((a, b) => a.fecha - b.fecha);
+    const vistos = new Map();
+    for (const e of usos) {
+      const g = K.grupoDe(c, e.grupoId);
+      const k = `${e.grupoId}|${e.fase}`;
+      if (!vistos.has(k)) vistos.set(k, `${g ? g.nombre : e.grupo} (${faseCorta(e.fase)}, ${fechaNum(e.fecha)})`);
+    }
+    return [...vistos.values()];
+  };
+  // Las notas de una disolución, en una línea
+  const notasDisolucion = (c, d) => c.entradas.filter((e) => e.disolucionId === d.id && e.nota && !esNotaDeCorreccion(e.nota))
+    .sort((a, b) => a.fecha - b.fecha).map((e) => `${sinEmoji(e.nota)} (${fechaNum(e.fecha)})`);
+  // De su composición, lo que se pesó o midió y el volumen preparado (sin las cuentas intermedias)
+  const loEsencial = (comp) => { const l = (comp || []).filter((x) => (x.cantidad && !x.intermedio) || /\s[µm]?L$/.test(x.texto)); return l.length ? l : comp || []; };
+
+  // op: { conReceta, conAnterior, conHistoria (los grupos), conHistoriaDis (las disoluciones), fotos: 'analisis' | 'todas' | 'album:<id>' | 'ninguna', quitadas: [id] }
+  // partes: [{ amb, ficha, receta }]: el cuaderno del informe y, si se quiere, los relacionados con él
+  const modeloInforme = (c, partes, op) => {
+    const principal = partes[0];
+    const ficha = principal.ficha;
+    const inf = ficha.informe || {};
+    const varios = partes.length > 1;
+    const B = [];
+    // Los números de secciones, tablas y figuras NO van aquí (versión 134): se ponen al dibujar (numerar),
+    // porque en un informe guardado se pueden quitar o mover cosas. Cada tabla y figura lleva su id (t1,
+    // f2…) y los textos que las citan, una marca «⟦T:t1⟧», «⟦F:f2⟧» o «⟦FS:f2:f8⟧» (Figuras 2 a 8)
+    const n = { tabla: 0, fig: 0 };
+    // (cada parte que se pone o se quita con «Qué incluir» lleva su zona: así, en un informe guardado, se
+    // puede quitar o volver a poner solo esa parte sin tocar lo demás; versión 142)
+    const enZona = (zona, fn) => { const a = B.length; fn(); for (let k = a; k < B.length; k++) B[k].zona = zona; };
+    const sec = (texto) => B.push({ t: 'h1', texto, num: true });
+    const sub = (texto) => B.push({ t: 'h2', texto, num: true });
+    const sinNumero = (texto) => B.push({ t: 'h1', texto, sinNumero: true });
+    const anexo = (texto) => B.push({ t: 'h1', texto, sinNumero: true, anexo: true });
+    // editar (versión 133): de dónde sale cada cosa, para cambiarla tocándola en el modo de editar
+    // (lo que viene de la bitácora se cambia en la bitácora; lo de la receta, en la receta)
+    const parrafos = (texto, clase, editar) => { for (const p of String(texto || '').split(/\n\s*\n/)) if (p.trim()) B.push({ t: 'p', texto: p.trim(), clase, editar }); };
+    const lineas = (texto) => String(texto || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    const tabla = (titulo, cab, filas, numericas = [], editarFilas) => { if (!filas.length) return; n.tabla++; B.push({ t: 'tabla', id: `t${n.tabla}`, titulo, cab, filas, numericas, editarFilas }); };
+    // Un texto propio del informe: su sección si está escrito; si no, en el modo de editar, un hueco para escribirlo ahí
+    const HUECOS = { resumen: 'el resumen', introduccion: 'la introducción', objetivos: 'los objetivos', discusion: 'la discusión', conclusiones: 'las conclusiones', referencias: 'las referencias' };
+    const escrito = (clave, titulo, numerada, lista, sinNum) => {
+      const ed = { tipo: 'texto', clave };
+      if (!inf[clave]) { if (op.editando) B.push({ t: 'hueco', texto: `＋ Escribir ${HUECOS[clave]}`, editar: ed }); return; }
+      if (sinNum) sinNumero(titulo); else sec(titulo);
+      if (lista) B.push({ t: 'lista', items: lineas(inf[clave]), numerada, editar: ed });
+      else parrafos(inf[clave], clave === 'resumen' ? 'resumen' : undefined, ed);
+    };
+    const y = (l) => (l.length > 1 ? `${l.slice(0, -1).join(', ')} y ${l[l.length - 1]}` : l[0] || '');
+    const casaAlguna = (x) => partes.some((p) => K.casa(x, p.amb));
+    const cuadernoDeGrupo = (g) => (partes.find((p) => K.casa(g, p.amb)) || principal).ficha.nombre;
+    // (las recetas, sin repetir: dos cuadernos pueden ir con la misma)
+    const recetas = [];
+    if (op.conReceta) for (const p of partes) if (p.receta.id && !recetas.some((r) => r.id === p.receta.id)) { const r = recetaDe(p.receta.id); if (r) recetas.push(r); }
+    const grupos = partes.flatMap((p) => ordenFamilia(K.gruposDe(c, p.amb)).map((x) => x.g));
+    const entradas = c.entradas.filter(casaAlguna).map((e) => conNombresDeAhora(c, e)).sort((a, b) => a.fecha - b.fecha);
+    const disoluciones = partes.flatMap((p) => K.disolucionesDe(c, p.amb)).sort((a, b) => a.fecha - b.fecha);
+    const medidas = { grupos: [], filas: [] };
+    for (const p of partes) {
+      const m = K.medidasDe(c, p.amb);
+      medidas.grupos.push(...m.grupos);
+      for (const f of m.filas) { const x = medidas.filas.find((z) => z.nombre === f.nombre); if (x) Object.assign(x.celdas, f.celdas); else medidas.filas.push({ ...f, celdas: { ...f.celdas } }); }
     }
     const distintos = entradas.filter((e) => e.distinto);
-    const otrosDelEvento = (e) => entradas.filter((x) => x.evento && x.evento === e.evento && x.id !== e.id).map((x) => x.grupo).filter(Boolean);
-    const el = h('article', { class: 'informe' },
-      h('header', { class: 'informe-cabecera' },
-        h('h1', { text: `📓 ${ficha.nombre}` }),
-        h('p', { text: receta && receta.id ? `Receta: ${receta.nombre}` : 'Sin receta todavía' }),
-        ficha.nota && h('p', { class: 'informe-nota', text: ficha.nota }),
-        h('p', { class: 'informe-meta', text: [`Informe del ${fechaLarga(Date.now())}`, entradas.length && `${entradas.length} apuntes, del ${fechaLarga(entradas[0].fecha)} al ${fechaLarga(entradas[entradas.length - 1].fecha)}`].filter(Boolean).join(' · ') })),
-      seccionReceta(),
-      arbol && [h('h2', { text: '🌳 Cómo van las muestras' }), (() => {
-        const caja = arbol.querySelector('.arbol-caja');
-        const leyenda = arbol.querySelector('.arbol-leyenda');
-        return h('div', { class: 'informe-arbol' }, caja, leyenda);
-      })()],
-      grupos.length > 0 && [h('h2', { text: '🧫 Grupos de muestras' }),
-        h('table', { class: 'informe-tabla' },
-          h('thead', {}, h('tr', {}, ['Grupo', 'Muestras', 'Cómo va', 'De dónde salió'].map((t) => h('th', { text: t })))),
-          h('tbody', {}, grupos.map((g) => {
-            const padre = g.padre && K.grupoDe(c, g.padre);
-            return h('tr', {},
-              h('td', {}, h('span', { class: 'informe-color', style: colorDe(g.id) ? `background: ${colorDe(g.id)}` : null }), g.nombre),
-              h('td', { text: g.muestras == null ? '—' : String(g.muestras) }),
-              h('td', { text: textoEstado(estadoGrupo(c, g)) }),
-              h('td', { text: g.padre ? `De «${padre ? padre.nombre : 'un grupo quitado'}», el ${fechaCorta(g.desde)}` : '—' }));
-          }))),
-        grupos.map((g) => {
-          const lista = hitos(g);
-          // Lo que le pasó en otros cuadernos antes de llegar aquí (versión 114)
-          const antes = conAnterior && g.vieneDe ? K.historiaAnterior(c, g.id) : [];
-          return [g.caracteristicas && h('div', { class: 'informe-hitos informe-caract' }, h('b', { text: `${g.nombre} · características` }), h('p', { text: g.caracteristicas })),
-            lista.length > 0 && h('div', { class: 'informe-hitos' }, h('b', { text: g.nombre }), h('ul', {}, lista.map((t) => h('li', { text: t })))),
-            antes.map((tr) => h('div', { class: 'informe-hitos informe-antes' },
-              h('b', { text: `${g.nombre} · antes, en el cuaderno «${tr.cuaderno}» (como «${tr.grupo}»)` }),
-              h('ul', {}, tr.entradas.filter((e) => e.tipo !== 'comparar').map((e) => h('li', { text: `${fechaCorta(e.fecha)}: ${K.titularDe(conNombresDeAhora(c, e))}${e.distinto ? ` — ⚠️ ${e.distinto}` : ''}${e.nota ? ` — ${e.nota}` : ''}` })))))];
-        })],
-      medidas.filas.length > 0 && [h('h2', { text: '📏 Medidas' }),
-        h('table', { class: 'informe-tabla' },
-          h('thead', {}, h('tr', {}, h('th', { text: '' }), medidas.grupos.map((g) => h('th', {}, h('span', { class: 'informe-color', style: colorDe(g.id) ? `background: ${colorDe(g.id)}` : null }), g.nombre)))),
-          h('tbody', {}, medidas.filas.map((f) => h('tr', {}, h('td', { text: f.nombre }),
-            medidas.grupos.map((g) => {
-              const x = f.celdas[g.id];
-              return h('td', { class: 'informe-numero', text: x ? `${K.numTexto(x.valor)}${x.unidad ? ` ${x.unidad}` : ''}${x.n > 1 ? ` (última de ${x.n})` : ''}` : '—' });
-            }))))),
-        h('p', { class: 'informe-meta', text: 'Lo último medido de cada grupo; las medidas anteriores están en la historia.' })],
-      disoluciones.length > 0 && [h('h2', { text: '🧪 Disoluciones' }), disoluciones.map((d) => {
-        const usos = K.usadaPor(c, d.id);
-        return h('section', { class: 'informe-disolucion' },
-          h('h3', { text: d.nombre }),
-          h('p', { class: 'informe-meta', text: [d.fase && K.nombreFase(d.fase), `preparada el ${fechaLarga(d.fecha)}`, d.preparada && `(${d.preparada})`, K.ESTADOS[d.estado || 'queda'], d.queda && `quedan ${d.queda}`].filter(Boolean).join(' · ') }),
-          (d.composicion || []).length > 0 && h('table', { class: 'informe-tabla' }, h('tbody', {}, d.composicion.map((x) => h('tr', {}, h('td', { text: x.nombre }), h('td', { class: 'informe-numero', text: x.texto }))))),
-          usos.length > 0 && h('p', { text: `Usada por: ${usos.map((u) => u.grupo).join(', ')}` }));
-      })],
-      distintos.length > 0 && [h('h2', { text: '⚠️ Lo que se hizo distinto a la receta' }),
-        h('table', { class: 'informe-tabla' },
-          h('thead', {}, h('tr', {}, ['Cuándo', 'Grupo', 'Fase', 'Qué cambió'].map((t) => h('th', { text: t })))),
-          h('tbody', {}, distintos.map((e) => h('tr', {}, h('td', { text: fechaCorta(e.fecha) }), h('td', { text: e.grupo || e.disolucion || '—' }), h('td', { text: e.fase ? K.nombreFase(e.fase) : '—' }), h('td', { text: e.distinto })))))],
-      entradas.length > 0 && [h('h2', { text: '📖 Historia' }), dias.map((d) => h('section', { class: 'informe-dia' },
-        h('h3', { text: d.dia }),
-        d.lista.map((e) => h('div', { class: 'informe-entrada', style: colorDe(e.grupoId) ? `--gc: ${colorDe(e.grupoId)}` : null },
-          h('p', { class: 'informe-titular' }, h('span', { class: 'informe-hora', text: horaDe(e.fecha) }), ' ',
-            e.grupo && h('b', { text: `${e.grupo} · ` }), K.titularDe(e)),
-          e.aprox && h('p', { class: 'informe-meta', text: '📅 Fecha por confirmar' }),
-          e.disoluciones && e.disoluciones.length > 0 && h('p', { class: 'informe-meta', text: `🧪 Con ${e.disoluciones.map((x) => x.nombre).join(', ')}` }),
-          e.evento && otrosDelEvento(e).length > 0 && h('p', { class: 'informe-meta', text: `👥 A la vez que ${otrosDelEvento(e).join(', ')}` }),
-          e.tipo === 'comparar' && (e.de || []).length > 0 && h('p', { class: 'informe-meta', text: `De: ${e.de.join(', ')}` }),
-          e.distinto && h('p', { class: 'informe-distinto', text: `⚠️ Distinto a la receta: ${e.distinto}` }),
-          e.nota && h('p', { class: 'informe-texto', text: e.nota }),
-          fotosDeEntrada(e))))) ],
-      ficha.notas && String(ficha.notas).trim() && [h('h2', { text: '📝 Notas del cuaderno' }), h('p', { class: 'informe-texto', text: ficha.notas })],
-      !entradas.length && !grupos.length && h('p', { text: 'Aún no hay nada apuntado en este cuaderno.' }));
-    return { el, listo: Promise.all(esperas) };
+    const sinFases = (g) => !fasesDe(recetaDe(g.recetaId)).length;
+
+    // Portada
+    const periodo = entradas.length ? `del ${fechaLargaDe(entradas[0].fecha)} al ${fechaLargaDe(entradas[entradas.length - 1].fecha)}` : '';
+    B.push({ t: 'portada', titulo: inf.titulo || `Informe de laboratorio: ${nombreDelTrabajo(ficha, principal.receta)}`, autores: inf.autores || '', institucion: inf.institucion || '',
+      fecha: fechaLargaDe(Date.now()),
+      detalles: [`${varios ? 'Cuadernos' : 'Cuaderno'}: ${partes.map((p) => p.ficha.nombre).join('; ')}`,
+        recetas.length > 0 && `${recetas.length > 1 ? 'Procedimientos' : 'Procedimiento'}: ${recetas.map((r) => r.nombre).join('; ')}`,
+        periodo && `Periodo de trabajo: ${periodo}`].filter(Boolean) });
+    escrito('resumen', 'Resumen', false, false, true);
+    escrito('introduccion', 'Introducción');
+    escrito('objetivos', 'Objetivos', false, true);
+
+    // Materiales y métodos
+    if (recetas.length || grupos.length || disoluciones.length) {
+      sec('Materiales y métodos');
+      const deCual = (r) => (recetas.length > 1 ? `: ${r.nombre}` : '');
+      enZona('procedimiento', () => { for (const rec of recetas) {
+        const res = Q.calcular(rec);
+        const valor = (x) => (x.id in res.valores ? Q.cantidad(res.valores[x.id], x.unidad) : '—');
+        sub(`Reactivos y cantidades${deCual(rec)}`);
+        if (rec.resumen) parrafos(rec.resumen, undefined, { tipo: 'receta', recetaId: rec.id, campo: 'resumen' });
+        const nDatos = `⟦T:t${n.tabla + 1}⟧`;
+        tabla(`Parámetros de partida del procedimiento${recetas.length > 1 ? ` ${rec.nombre}` : ''}.`, ['Parámetro', 'Valor'], rec.datos.map((d) => [d.nombre, valor(d)]), [1],
+          rec.datos.map((d) => ({ tipo: 'abrirReceta', recetaId: rec.id, marca: 'data-dato', valor: d.id })));
+        tabla(`Cantidades de reactivo calculadas a partir de los parámetros de la ${nDatos}.`, ['Cantidad', 'Valor'], rec.calculos.map((x) => [x.nombre, valor(x)]), [1],
+          rec.calculos.map((x) => ({ tipo: 'abrirReceta', recetaId: rec.id, marca: 'data-calculo', valor: x.id })));
+        const notas = lineas(rec.notas);
+        if (notas.length) { B.push({ t: 'p', texto: 'Observaciones sobre los reactivos y materiales:' }); B.push({ t: 'lista', items: notas.map(sinEmoji), editar: { tipo: 'receta', recetaId: rec.id, campo: 'notas' } }); }
+      } });
+      if (disoluciones.length) {
+        sub('Disoluciones preparadas');
+        // (con quién se usó y sus notas: ahí suele estar lo importante, como el pH que se midió)
+        tabla('Disoluciones preparadas durante el trabajo: cantidades empleadas en el momento de la preparación, grupos de muestras que las emplearon y observaciones.',
+          ['Disolución', 'Cantidades', 'Empleada en', 'Observaciones'],
+          disoluciones.map((d) => [`${d.nombre} (${fechaNum(d.fecha)})${d.preparada ? `. ${/^\d+([.,]\d+)?$/.test(d.preparada.trim()) ? 'Cantidad preparada' : 'Anotación'}: ${d.preparada}` : ''}`,
+            loEsencial(d.composicion).map((x) => `${x.nombre}: ${x.texto}`).join('; ') || '—',
+            empleoDe(c, d).join('; ') || '—', notasDisolucion(c, d).join('; ') || '—']), [], disoluciones.map((d) => ({ tipo: 'disolucion', id: d.id })));
+      }
+      enZona('procedimiento', () => { for (const rec of recetas) {
+        if (!rec.pasos.length) continue;
+        sub(`Procedimiento${deCual(rec)}`);
+        const res = Q.calcular(rec);
+        B.push({ t: 'p', texto: 'El protocolo seguido se transcribe a continuación tal como figura en el cuaderno, con las cantidades correspondientes a los parámetros indicados en el apartado anterior.' });
+        rec.pasos.forEach((p, i) => {
+          const ed = { tipo: 'abrirReceta', recetaId: rec.id, marca: 'data-paso', valor: String(i) };
+          if (p.titulo) B.push({ t: 'p', texto: sinEmoji(p.titulo), clase: 'fase', editar: ed });
+          if (p.subfase) B.push({ t: 'p', texto: sinEmoji(p.subfase), clase: 'subfase', editar: ed });
+          const txt = sinEmoji(Q.trozosPaso(p.texto, rec, res).map((x) => x.texto).join(''));
+          // (el tiempo y los ciclos, solo si el paso no los dice ya: si no, salía «durante 3 h. (3 h)»)
+          const extra = [p.minutos && !txt.includes(Q.duracion(p.minutos)) && Q.duracion(p.minutos), p.ciclos && !/ciclo/i.test(txt) && `${p.ciclos} ciclos`].filter(Boolean).join(', ');
+          B.push({ t: 'paso', n: i + 1, texto: `${txt}${extra ? ` (${extra})` : ''}`, editar: ed });
+        });
+        if (rec.seguridad) B.push({ t: 'p', texto: `Precauciones: ${sinEmoji(rec.seguridad)}`, clase: 'nota', editar: { tipo: 'receta', recetaId: rec.id, campo: 'seguridad' } });
+      } });
+      if (grupos.length) {
+        sub('Muestras');
+        const origen = (g) => {
+          if (g.padre) { const p = K.grupoDe(c, g.padre); return `Separado del grupo ${p ? p.nombre : 'de origen'} (${fechaNum(g.desde)})`; }
+          if (g.vieneDe) {
+            const o = K.grupoDe(c, g.vieneDe);
+            return o && casaAlguna(o) ? `Continuación del grupo ${o.nombre}${varios ? ` (cuaderno ${cuadernoDeGrupo(o)})` : ''}, ${fechaNum(g.vieneDesde)}`
+              : `Procedente del cuaderno ${g.vieneCuaderno || 'anterior'} (${fechaNum(g.vieneDesde)})`;
+          }
+          return 'Lote inicial';
+        };
+        // n: al formarse el grupo → al cierre (antes solo al cierre: «0» en los que ya habían pasado a otro sitio parecía que no tenían)
+        const nTexto = (g) => { const a = muestrasAlEmpezar(c, g); const b = g.muestras; return a == null && b == null ? '—' : a == null || a === b ? String(b ?? a) : `${a} → ${b ?? '—'}`; };
+        B.push({ t: 'p', texto: `Las muestras se organizaron en ${grupos.length} ${grupos.length === 1 ? 'grupo' : 'grupos'}; cada grupo reúne muestras que siguieron el mismo recorrido por el procedimiento. Un grupo nuevo se forma al separar parte de las muestras de otro.` });
+        tabla('Grupos de muestras estudiados. n: número de muestras al formarse el grupo → al cierre del informe.', ['Grupo', ...(varios ? ['Cuaderno'] : []), 'n', 'Origen', 'Características'],
+          grupos.map((g) => [g.nombre, ...(varios ? [cuadernoDeGrupo(g)] : []), nTexto(g), origen(g), sinEmoji(g.caracteristicas) || '—']), [varios ? 2 : 1],
+          grupos.map((g) => ({ tipo: 'grupo', id: g.id })));
+      }
+    }
+
+    // Resultados
+    const quitadas = new Set(op.quitadas || []);
+    const fotos = [];
+    if (op.fotos && op.fotos !== 'ninguna') {
+      if (op.fotos.startsWith('album:')) {
+        const a = c.albumes.find((x) => x.id === op.fotos.slice(6));
+        for (const id of (a ? a.fotos : [])) {
+          const e = entradas.find((x) => (x.fotos || []).includes(id));
+          if (e) fotos.push({ id, e, apartado: K.infoFoto(e, id).apartado || '' });
+        }
+      } else {
+        for (const e of entradas) {
+          if (!(e.fotos || []).length || (op.fotos === 'analisis' && K.tipoFoto(e) !== 'analisis')) continue;
+          for (const a of K.apartadosDe(e)) for (const id of a.fotos) fotos.push({ id, e, apartado: a.titulo });
+        }
+      }
+    }
+    // Por fases (versión 131, lo pidió el usuario: «las figuras se deberían ordenar por fases, la fase 1, la
+    // fase 2…»): primero el cuaderno, luego la fase en el orden de su receta (la de la foto: la que el grupo
+    // estaba haciendo o acababa de terminar) y, dentro de cada fase, por fecha. Lo que no es de ninguna
+    // fase, al final de su cuaderno
+    const fotosVan = fotos.filter((f) => !quitadas.has(f.id)).map((f, i) => {
+      const pi = Math.max(0, partes.findIndex((p) => K.casa(f.e, p.amb)));
+      const fase = K.faseDeEntrada(c, f.e);
+      const fi = fasesDe(recetaDe(f.e.recetaId)).indexOf(fase);
+      return { ...f, i, pi, fase: fi < 0 ? '' : fase, fi: fi < 0 ? Infinity : fi };
+    }).sort((a, b) => a.pi - b.pi || a.fi - b.fi || a.e.fecha - b.e.fecha || a.i - b.i);
+    const arboles = partes.filter((p) => p.receta.id && K.gruposDe(c, p.amb).length).map((p) => ({ p, el: arbolDeMuestras(c, p.receta, () => {}, p.amb, 0, true) }));
+    const figuras = new Map(); // id de apunte → «Figura 3» o «Figuras 3–5» (para el anexo)
+    if (grupos.length || medidas.filas.length || fotosVan.length || distintos.length) {
+      sec('Resultados');
+      if (grupos.length) {
+        sub('Seguimiento de las muestras');
+        // Una fila por grupo con lo que hizo ÉL (desde que se formó): lo de antes está en la fila del grupo
+        // del que salió (antes salían todas las fases desde el principio, iguales en casi todos)
+        const resumen = (g) => {
+          const items = historiaPropia(c, g);
+          const fasesTxt = items.filter((x) => x.tipo === 'pasada').map((p) => `${faseCorta(p.fase)}${p.vez > 1 ? ` (${p.vez}.ª vez)` : ''}${p.terminada ? '' : p.enCurso ? ' (en curso)' : ' (sin terminar)'}`).join(', ');
+          const tecnicas = new Map();
+          for (const it of items.filter((x) => x.tipo === 'analisis')) { const t = sinEmoji(it.e.tecnica) || 'Otra'; tecnicas.set(t, (tecnicas.get(t) || 0) + 1); }
+          const fechas = items.map((x) => x.fin || x.fecha).concat(items.map((x) => x.fecha));
+          const inicio = g.desde || g.vieneDesde || (fechas.length ? Math.min(...fechas) : null);
+          const periodoG = inicio != null && fechas.length ? `${fechaNum(inicio)} – ${fechaNum(Math.max(...fechas))}` : '—';
+          return [g.nombre, ...(varios ? [cuadernoDeGrupo(g)] : []), fasesTxt || '—', [...tecnicas].map(([t, k]) => (k > 1 ? `${t} (${k})` : t)).join(', ') || '—', periodoG,
+            sinFases(g) && !['juntado', 'pasado'].includes(estadoGrupo(c, g).estado) ? '—' : estadoFormal(estadoGrupo(c, g))];
+        };
+        const nArbol = arboles.length ? n.fig + 1 : null;
+        const laTabla = `⟦T:t${n.tabla + 1}⟧`;
+        B.push({ t: 'p', texto: `${nArbol ? `La ${arboles.length > 1 ? `⟦FS:f${nArbol}:f${nArbol + arboles.length - 1}⟧ muestran` : `⟦F:f${nArbol}⟧ muestra`} el recorrido de cada grupo por las fases del procedimiento, y la ${laTabla} lo resume` : `La ${laTabla} resume el recorrido de cada grupo`}. Para no repetir, de cada grupo se indica solo lo que hizo desde que se formó: lo anterior corresponde al grupo del que procede.` });
+        for (const { p, el } of arboles) {
+          n.fig++;
+          const hay = (sel) => Boolean(el.querySelector(sel));
+          const leyenda = [
+            'Cada línea vertical representa un grupo de muestras y cada fila, una fase del procedimiento',
+            'una rama indica que parte de las muestras pasó a formar un grupo nuevo',
+            hay('.arbol-vuelta') && 'el trazo discontinuo curvo (↺), la repetición de fases anteriores',
+            hay('.arbol-analisis') && 'los rombos (◆), las caracterizaciones',
+            hay('.arbol-junta') && 'la línea de puntos, la unión de dos grupos',
+            hay('.arbol-llegada') && 'el triángulo (▼), muestras procedentes de otro cuaderno',
+            'el trazo horizontal final, un grupo detenido en esa fase, y el círculo, un grupo en curso',
+            hay('.arbol-carpeta') && 'los grupos se reparten en las series indicadas en la parte superior',
+          ].filter(Boolean);
+          // (amb: para volver a dibujarlo en un informe guardado, que no guarda el dibujo)
+          B.push({ t: 'arbol', id: `f${n.fig}`, amb: { recetaId: p.amb.recetaId, cuadernoId: p.amb.cuadernoId }, titulo: `Recorrido de los grupos de muestras por el procedimiento${varios ? ` (cuaderno ${p.ficha.nombre})` : ''}. ${leyenda.join('; ')}. n: número de muestras.`, el });
+        }
+        tabla('Resumen de lo realizado por cada grupo desde su formación. Fases: «2.ª vez», fase ya realizada antes por el grupo o por el grupo del que procede; Caracterización: técnica y número de sesiones.',
+          ['Grupo', ...(varios ? ['Cuaderno'] : []), 'Fases', 'Caracterización', 'Periodo', 'Estado al cierre'], grupos.map(resumen), [], grupos.map((g) => ({ tipo: 'grupo', id: g.id })));
+        // Los grupos que llegaron al final, con su recorrido entero y en qué se apartaron del procedimiento (versión 149)
+        const finales = grupos.filter((g) => esGrupoFinal(c, g));
+        if (op.conVariaciones && finales.length) enZona('variaciones', () => {
+          sub('Diferencias de los grupos finales respecto al procedimiento');
+          B.push({ t: 'p', texto: `La ⟦T:t${n.tabla + 1}⟧ recoge, para cada grupo que llegó al final del trabajo, su recorrido completo por las fases (incluido lo realizado antes de separarse del grupo del que procede) y en qué se apartó del procedimiento: fases repetidas o no realizadas, disoluciones con condiciones distintas de las indicadas, modificaciones anotadas y muestras incorporadas de otros grupos. Aparte se recogen las mediciones y observaciones de cada uno, como el pH de las disoluciones empleadas.` });
+          tabla('Grupos finales: recorrido completo y diferencias respecto al procedimiento. n: número de muestras al final.',
+            ['Grupo', ...(varios ? ['Cuaderno'] : []), 'n', 'Recorrido', 'Diferencias respecto al procedimiento', 'Mediciones y observaciones', 'Estado al cierre'],
+            finales.map((g) => {
+              const v = variacionesDe(c, g);
+              const nf = muestrasFinales(c, g);
+              return [g.nombre, ...(varios ? [cuadernoDeGrupo(g)] : []), nf == null ? '—' : String(nf), v.recorrido || '—', v.lista.length ? `${v.lista.join('. ')}.` : 'Ninguna',
+                v.medidas.length ? `${v.medidas.join('. ')}.` : '—', sinFases(g) ? '—' : estadoFormal(estadoGrupo(c, g))];
+            }), [varios ? 2 : 1], finales.map((g) => ({ tipo: 'grupo', id: g.id })));
+        });
+      }
+      if (medidas.filas.length) {
+        sub('Medidas');
+        tabla('Última medida de cada magnitud en cada grupo (entre paréntesis, cuántas veces se midió).', ['Magnitud', ...medidas.grupos.map((g) => g.nombre)],
+          medidas.filas.map((f) => [f.nombre, ...medidas.grupos.map((g) => { const x = f.celdas[g.id]; return x ? `${K.numTexto(x.valor)}${x.unidad ? ` ${x.unidad}` : ''}${x.n > 1 ? ` (${x.n})` : ''}` : '—'; })]),
+          medidas.grupos.map((_, i) => i + 1));
+      }
+      if (fotosVan.length) enZona('fotos', () => {
+        sub('Caracterización');
+        // Una figura por sesión (un apunte) y apartado, con sus fotos como paneles (a), (b)… y un pie común
+        // (antes, una figura por foto: 35 figuras casi iguales). Tocar un panel cambia su texto o lo quita;
+        // tocar el pie, la descripción de la figura (inf.figuras[clave])
+        const pies = inf.pies || {};
+        const descripciones = inf.figuras || {};
+        const conjuntos = [];
+        for (const f of fotosVan) {
+          const ult = conjuntos[conjuntos.length - 1];
+          if (ult && ult.e === f.e && ult.apartado === f.apartado && ult.fotos.length < 6) ult.fotos.push(f.id);
+          else conjuntos.push({ e: f.e, apartado: f.apartado, fotos: [f.id], sigue: Boolean(ult && ult.e === f.e && ult.apartado === f.apartado), fase: f.fase, pi: f.pi });
+        }
+        // (un título por fase encima de sus figuras, si hay más de una fase o más de un cuaderno)
+        const deVarios = new Set(conjuntos.map((k) => k.pi)).size > 1;
+        const rotulo = (k) => `${deVarios ? `${partes[k.pi].ficha.nombre}: ` : ''}${k.fase ? fasesNombre(k.fase) : 'Otras imágenes'}`;
+        const conRotulos = new Set(conjuntos.map(rotulo)).size > 1;
+        B.push({ t: 'p', texto: `Las imágenes obtenidas se ordenan por fase del procedimiento y, dentro de cada fase, por sesión de trabajo${conjuntos.length > 1 ? ` (⟦FS:f${n.fig + 1}:f${n.fig + conjuntos.length}⟧)` : ` (⟦F:f${n.fig + 1}⟧)`}. En cada pie se indican el grupo de muestras, la etapa del procedimiento en la que se encontraba y, cuando se registraron, el aumento y la zona observada.` });
+        let rotuloAntes = null;
+        for (const [ik, k] of conjuntos.entries()) {
+          if (conRotulos && rotulo(k) !== rotuloAntes) { rotuloAntes = rotulo(k); B.push({ t: 'p', clase: 'fase', texto: rotuloAntes }); }
+          n.fig++;
+          const e = k.e;
+          figuras.set(e.id, figuras.has(e.id) ? { ...figuras.get(e.id), hasta: n.fig } : { desde: n.fig, hasta: n.fig });
+          const clave = `${e.id}|${k.apartado || ''}`;
+          const momento = sinEmoji(K.momentoDe(c, e.grupoId, e.fecha)).replace(/ · /g, ', ');
+          const que = e.tipo === 'analisis' ? `Imágenes de ${sinEmoji(e.tecnica) || 'caracterización'}` : e.tipo === 'preparar' ? `Imágenes de la disolución ${e.disolucion}` : 'Imágenes';
+          const de = e.grupo ? ` del grupo ${(K.grupoDe(c, e.grupoId) || e).nombre || e.grupo}` : e.disolucion && e.tipo !== 'preparar' ? ` de la disolución ${e.disolucion}` : '';
+          const cuando = momento && momento !== 'sin empezar' ? `, ${momento.replace(/^tras (fase)/i, 'tras la $1').replace(/^en (fase)/i, 'durante la $1').replace(/^en /, 'durante ')}` : '';
+          const cabeza = `${que}${de}${cuando}${k.apartado ? ` (${sinEmoji(k.apartado)})` : ''}, ${fechaNum(e.fecha)}${k.sigue ? ' (continuación)' : ''}`;
+          const desc = !k.sigue && descripciones[clave] ? `${sinEmoji(descripciones[clave])}${/[.!?]$/.test(descripciones[clave].trim()) ? '' : '.'}` : '';
+          // (las letras (a), (b)… y el pie entero se ponen al dibujar: pieFotos, en numerar)
+          const paneles = k.fotos.map((id) => {
+            const info = K.infoFoto(e, id);
+            const propio = pies[id] || c.titulos[id] || '';
+            return { id, texto: [sinEmoji(propio), info.aumento, info.zona && `zona: ${info.zona}`].filter(Boolean).join(', ') };
+          });
+          // Lo que se escribió al hacer las fotos (la nota del apunte), debajo de las imágenes de esa sesión
+          // (versión 132, lo pidió el usuario; antes solo salía en el anexo). Si la sesión ocupa varias
+          // figuras, debajo de la última
+          const ultimaDeLaSesion = !conjuntos[ik + 1] || conjuntos[ik + 1].e !== e;
+          const observaciones = ultimaDeLaSesion ? sinEmojiLineas(e.nota) : '';
+          B.push({ t: 'fotos', id: `f${n.fig}`, clave, entradaId: e.id, finSesion: ultimaDeLaSesion, paneles, observaciones, cabeza, desc });
+        }
+      });
+      if (distintos.length) {
+        sub('Desviaciones respecto al procedimiento');
+        tabla('Modificaciones respecto al procedimiento escrito, registradas al finalizar cada fase.', ['Fecha', 'Grupo', 'Fase', 'Modificación'],
+          distintos.map((e) => [fechaNum(e.fecha), e.grupo || e.disolucion || '—', e.fase ? fasesNombre(e.fase) : '—', sinEmoji(e.distinto)]), [], distintos.map((e) => ({ tipo: 'apuntes', ids: [e.id], campo: 'distinto' })));
+      }
+    }
+    escrito('discusion', 'Discusión');
+    escrito('conclusiones', 'Conclusiones', false, true);
+    escrito('referencias', 'Referencias', true, true, true);
+
+    // Anexos
+    // La historia de cada grupo y de cada disolución, sin repetir (antes, todos los apuntes seguidos en una
+    // tabla: lo de un grupo y lo de los que salieron de él se mezclaban)
+    const linea = (it) => { const t = textoItem(c, it, { figuras }); return `${t.cuando.charAt(0).toUpperCase()}${t.cuando.slice(1)}: ${t.que}.${t.detalles.length ? ` ${t.detalles.map((x) => `${x}${/[.!?)]$/.test(x) ? '' : '.'}`).join(' ')}` : ''}`; };
+    // (cada línea se cambia tocándola: la nota de sus apuntes)
+    const deItem = (it) => ({ tipo: 'apuntes', ids: it.tipo === 'pasada' ? it.entradas.map((x) => x.id) : [it.e.id] });
+    // (versión 147, lo pidió el usuario: la historia de los grupos y la de las disoluciones, en dos anexos que se
+    // ponen o se quitan cada uno por su lado; antes, uno solo «Historia de cada grupo y disolución»)
+    // (sin los cambios de estado —«queda poca», «desechada»—: sirven para organizarse, no para el informe; lo demás de
+    // cada disolución ya está en su tabla; versión 148, lo dijo el usuario)
+    const historiaDisInforme = (d) => historiaDisolucionPropia(c, d).filter((it) => it.tipo !== 'estado');
+    const disConHistoria = disoluciones.filter((d) => historiaDisInforme(d).length);
+    const sueltas = entradas.filter((e) => !e.grupoId && !e.disolucionId);
+    if (op.conHistoria && (grupos.length || sueltas.length)) enZona('historia', () => {
+      anexo('Historia de cada grupo');
+      B.push({ t: 'p', texto: 'Transcripción de las anotaciones del cuaderno de laboratorio. De cada grupo se recoge solo lo realizado desde que se formó; lo anterior figura en el grupo del que procede. Cada fase realizada aparece una sola vez, con su inicio y su final.' });
+      for (const g of grupos) {
+        const items = historiaPropia(c, g);
+        const p = g.padre && K.grupoDe(c, g.padre);
+        const edG = { tipo: 'grupo', id: g.id };
+        B.push({ t: 'p', clase: 'fase', editar: edG, texto: `Grupo ${g.nombre}${varios ? ` (cuaderno ${cuadernoDeGrupo(g)})` : ''}${p ? `, separado del grupo ${p.nombre}` : g.vieneDe ? ', procedente de otro cuaderno' : ', lote inicial'}` });
+        // (una raya o espacios no son características: salía «Características: —»)
+        if (/[\p{L}\p{N}]/u.test(g.caracteristicas || '')) B.push({ t: 'p', clase: 'nota', editar: edG, texto: `Características: ${sinEmoji(g.caracteristicas)}` });
+        B.push({ t: 'lista', items: items.length ? items.map(linea) : ['Sin anotaciones propias.'], editarItems: items.map(deItem) });
+      }
+      if (sueltas.length) {
+        B.push({ t: 'p', clase: 'fase', texto: 'Otras anotaciones' });
+        B.push({ t: 'lista', items: sueltas.map((e) => linea({ tipo: e.tipo, fecha: e.fecha, e })), editarItems: sueltas.map((e) => ({ tipo: 'apuntes', ids: [e.id] })) });
+      }
+    });
+    if (op.conHistoriaDis && disConHistoria.length) enZona('historiaDis', () => {
+      anexo('Historia de cada disolución');
+      B.push({ t: 'p', texto: 'Transcripción de las anotaciones del cuaderno sobre cada disolución: su preparación, las observaciones y los cambios de estado.' });
+      for (const d of disConHistoria) {
+        const items = historiaDisInforme(d);
+        // (sin repetir «Disolución» si su nombre ya empieza así: salía «Disolución Disolución CuO nº 1»; versión 144)
+        B.push({ t: 'p', clase: 'fase', texto: /^disoluci[oó]n\b/i.test(d.nombre) ? d.nombre : `Disolución ${d.nombre}`, editar: { tipo: 'disolucion', id: d.id } });
+        B.push({ t: 'lista', items: items.map(linea), editarItems: items.map(deItem) });
+      }
+    });
+    if (op.conAnterior) enZona('anterior', () => {
+      // Lo que hicieron antes, en un cuaderno que no entra en el informe: una tabla por cuaderno de
+      // procedencia, cada operación una sola vez
+      const porCuaderno = new Map();
+      for (const g of grupos.filter((x) => x.vieneDe)) {
+        const o = K.grupoDe(c, g.vieneDe);
+        if (o && casaAlguna(o)) continue;
+        for (const tr of K.historiaAnterior(c, g.id)) {
+          if (!porCuaderno.has(tr.cuaderno)) porCuaderno.set(tr.cuaderno, { grupos: [], entradas: new Map() });
+          const pc = porCuaderno.get(tr.cuaderno);
+          if (!pc.grupos.includes(g.nombre)) pc.grupos.push(g.nombre);
+          for (const e of tr.entradas.filter((x) => x.tipo !== 'comparar')) pc.entradas.set(e.id, e);
+        }
+      }
+      if (porCuaderno.size) {
+        anexo('Historia anterior de las muestras');
+        for (const [cuad, pc] of porCuaderno) {
+          tabla(`Operaciones realizadas en el cuaderno ${cuad} sobre las muestras ${pc.grupos.length > 1 ? `de los grupos ${y(pc.grupos)}` : `del grupo ${pc.grupos[0]}`}, antes de su traslado a este cuaderno.`,
+            ['Fecha', 'Grupo', 'Operación', 'Observaciones'],
+            [...pc.entradas.values()].sort((a, b) => a.fecha - b.fecha).map((e) => { const x = conNombresDeAhora(c, e); return [fechaNum(e.fecha), x.grupo || '—', actividadFormal(x), [sinEmoji(e.distinto), sinEmoji(e.nota)].filter(Boolean).join('. ') || '—']; }));
+        }
+      }
+    });
+    for (const p of partes) {
+      if (p.ficha.notas && String(p.ficha.notas).trim()) { anexo(varios ? `Notas del cuaderno ${p.ficha.nombre}` : 'Notas del cuaderno'); parrafos(p.ficha.notas, 'texto', { tipo: 'notasCuaderno', cuadernoId: p.ficha.id, recetaId: p.amb.recetaId || null, nombre: p.ficha.nombre }); }
+    }
+    if (B.length === 1) B.push({ t: 'p', texto: 'Aún no hay nada apuntado en este cuaderno.', clase: 'nota' });
+    return B;
+  };
+
+  // ── Todos los datos en un texto, para pasárselo a una IA (versión 129; el usuario: «usar IAs en el
+  // informe prefiero hacerlo luego por mi cuenta; para eso necesito todos los datos: que haya otro texto
+  // para descargar y mandarle a una IA con todos los datos… que esté toda la información importante»).
+  // Markdown (lo entienden bien), con TODO (no depende de «Qué incluir», salvo los cuadernos que entran)
+  // y sin repetir: la historia de cada grupo es solo la suya. Las imágenes no van (son archivos): se dice
+  // de cada una su nombre de archivo original, para adjuntarlas si se quiere ──
+  const textoParaIA = async (c, partes) => {
+    const principal = partes[0];
+    const inf = principal.ficha.informe || {};
+    const L = [];
+    const md = (s) => String(s == null ? '' : s).replace(/\|/g, '/').replace(/\s*\n\s*/g, ' / ').trim();
+    const tablaMd = (cab, filas) => { if (!filas.length) return; L.push(`| ${cab.join(' | ')} |`, `|${cab.map(() => ' --- ').join('|')}|`, ...filas.map((f) => `| ${f.map((x) => md(x) || '—').join(' | ')} |`), ''); };
+    const lineas = (t) => String(t || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    const casaAlguna = (x) => partes.some((p) => K.casa(x, p.amb));
+    const grupos = partes.flatMap((p) => ordenFamilia(K.gruposDe(c, p.amb)).map((x) => ({ ...x, p })));
+    const entradas = c.entradas.filter(casaAlguna).map((e) => conNombresDeAhora(c, e)).sort((a, b) => a.fecha - b.fecha);
+    const disoluciones = partes.flatMap((p) => K.disolucionesDe(c, p.amb)).sort((a, b) => a.fecha - b.fecha);
+    const nombreGrupo = (id, porDefecto) => { const g = K.grupoDe(c, id); return g ? g.nombre : porDefecto; };
+
+    L.push(`# Datos de laboratorio: ${inf.titulo || nombreDelTrabajo(principal.ficha, principal.receta)}`, '');
+    L.push(`Datos exportados el ${fechaHoraNum(Date.now())} de «Química», un cuaderno de laboratorio digital. Contienen todo lo registrado: el procedimiento con sus cantidades, las disoluciones preparadas, los grupos de muestras con su historia, los análisis, las medidas, los datos de cada imagen y las notas.`, '');
+    L.push('Cómo leerlo:', '- Las muestras se organizan en **grupos**: muestras que siguieron el mismo recorrido. Un grupo nuevo se forma al separar parte de las muestras de otro; cada grupo solo incluye lo que hizo él desde que se formó (lo anterior está en el grupo del que procede). Así no se repite nada.',
+      '- Una **fase** realizada aparece una vez, con su inicio y su final. «2.ª vez» indica que el grupo (o el grupo del que procede) ya la había hecho antes.',
+      '- Las cantidades del procedimiento son las de ahora. Las de cada disolución son las que se usaron al prepararla.',
+      '- Las imágenes no van en este texto; de cada una se da su nombre de archivo original, para poder adjuntarla.',
+      '- Fechas: día/mes/año y hora de 24 h.', '');
+
+    // Lo que ya ha escrito el autor
+    const escritos = TEXTOS_INFORME.filter(([k]) => inf[k]);
+    if (escritos.length) {
+      L.push('## Textos ya escritos por el autor', '');
+      for (const [k, rotulo] of escritos) L.push(`### ${rotulo}`, String(inf[k]).trim(), '');
+    }
+
+    // Cuadernos
+    L.push('## Cuadernos', '');
+    for (const p of partes) {
+      const suyas = entradas.filter((e) => K.casa(e, p.amb));
+      L.push(`- **${p.ficha.nombre}**: ${p.receta.id ? `procedimiento «${p.receta.nombre}»` : 'sin procedimiento escrito'}; ${K.gruposDe(c, p.amb).length} grupos de muestras; ${suyas.length} anotaciones${suyas.length ? `, del ${fechaNum(suyas[0].fecha)} al ${fechaNum(suyas[suyas.length - 1].fecha)}` : ''}.${p.ficha.nota ? ` De qué va: ${md(p.ficha.nota)}` : ''}`);
+    }
+    L.push('');
+
+    // Procedimientos
+    const recetas = [];
+    for (const p of partes) if (p.receta.id && !recetas.some((r) => r.id === p.receta.id)) { const r = recetaDe(p.receta.id); if (r) recetas.push(r); }
+    for (const rec of recetas) {
+      const res = Q.calcular(rec);
+      const valor = (x) => (x.id in res.valores ? Q.cantidad(res.valores[x.id], x.unidad) : 'sin escribir');
+      L.push(`## Procedimiento: ${rec.nombre}`, '');
+      if (rec.resumen) L.push(sinEmoji(rec.resumen), '');
+      L.push('### Parámetros de partida', '');
+      tablaMd(['Parámetro', 'Valor', 'Fórmula química'], rec.datos.map((d) => [d.nombre, valor(d), d.formula || '']));
+      L.push('### Cantidades calculadas', '');
+      tablaMd(['Cantidad', 'Valor', 'Cómo se calcula', 'Con los números'], rec.calculos.map((x) => [x.nombre, valor(x), Q.leerFormula(x, rec) || x.expr || '', Q.formulaConNumeros(x, rec, res) || '']));
+      L.push('### Pasos', '');
+      rec.pasos.forEach((p, i) => {
+        if (p.titulo) L.push('', `**${sinEmoji(p.titulo)}**`);
+        if (p.subfase) L.push(`*${sinEmoji(p.subfase)}*${p.parte === 'disolucion' ? ' (se prepara una disolución)' : p.parte === 'muestras' ? ' (con las muestras)' : ''}`);
+        const txt = sinEmoji(Q.trozosPaso(p.texto, rec, res).map((x) => x.texto).join(''));
+        const extra = [p.minutos && `cronómetro: ${Q.duracion(p.minutos)}`, p.ciclos && `${p.ciclos} ciclos`].filter(Boolean).join('; ');
+        L.push(`${i + 1}. ${txt}${extra ? ` (${extra})` : ''}`);
+      });
+      L.push('');
+      if (rec.notas) L.push('### Notas sobre reactivos y materiales', ...lineas(rec.notas).map((x) => `- ${sinEmoji(x)}`), '');
+      if (rec.seguridad) L.push('### Seguridad', sinEmoji(rec.seguridad), '');
+    }
+
+    // Disoluciones
+    if (disoluciones.length) {
+      L.push('## Disoluciones preparadas', '');
+      for (const d of disoluciones) {
+        L.push(`### ${d.nombre}`, `- Preparada el ${fechaHoraNum(d.fecha)}${d.fase ? `, en ${fasesNombre(d.fase)}` : ''}${d.subfase ? ` (${sinEmoji(d.subfase)})` : ''}.${d.preparada ? ` Cantidad o detalle apuntado: ${md(d.preparada)}.` : ''}`);
+        if ((d.composicion || []).length) L.push(`- Composición al prepararla: ${d.composicion.map((x) => `${x.nombre}: ${x.texto}${x.intermedio ? ' (cálculo intermedio)' : ''}`).join('; ')}.`);
+        const usos = empleoDe(c, d);
+        L.push(`- Empleada en: ${usos.length ? usos.join('; ') : 'ningún grupo apuntado'}.`);
+        L.push(`- Estado actual: ${sinEmoji(K.ESTADOS[d.estado || 'queda']).toLowerCase()}${d.queda ? ` (queda: ${md(d.queda)})` : ''}.`);
+        for (const it of historiaDisolucionPropia(c, d)) {
+          if (it.tipo === 'preparar' && !it.e.nota && !(it.e.fotos || []).length) continue;
+          const t = textoItem(c, it);
+          L.push(`- ${t.cuando}: ${t.que}.${t.detalles.length ? ` ${t.detalles.join('. ')}.` : ''}`);
+        }
+        L.push('');
+      }
+    }
+
+    // Grupos
+    if (grupos.length) {
+      L.push('## Grupos de muestras', '', 'Familia de grupos (cada uno debajo del grupo del que salió):', '');
+      for (const { g, nivel, p } of grupos) {
+        const a = muestrasAlEmpezar(c, g);
+        L.push(`${'  '.repeat(nivel)}- ${g.nombre}${partes.length > 1 ? ` [cuaderno ${p.ficha.nombre}]` : ''}: ${a != null ? `${a} → ${g.muestras ?? '—'} muestras` : ''}; ${!fasesDe(recetaDe(g.recetaId)).length && !['juntado', 'pasado'].includes(estadoGrupo(c, g).estado) ? 'en un cuaderno sin fases' : estadoFormal(estadoGrupo(c, g))}`);
+      }
+      L.push('');
+      for (const { g, p } of grupos) {
+        const padre = g.padre && K.grupoDe(c, g.padre);
+        const o = g.vieneDe && K.grupoDe(c, g.vieneDe);
+        const a = muestrasAlEmpezar(c, g);
+        L.push(`### Grupo «${g.nombre}»${partes.length > 1 ? ` (cuaderno ${p.ficha.nombre})` : ''}`);
+        L.push(`- Origen: ${padre ? `separado del grupo «${padre.nombre}» el ${fechaHoraNum(g.desde)}` : o ? `continuación del grupo «${o.nombre}» del cuaderno ${g.vieneCuaderno || 'anterior'} (${fechaHoraNum(g.vieneDesde)})` : 'lote inicial'}.`);
+        L.push(`- Muestras: ${a ?? '—'} al formarse, ${g.muestras ?? '—'} al cierre.`);
+        if (/[\p{L}\p{N}]/u.test(g.caracteristicas || '')) L.push(`- Características: ${md(g.caracteristicas)}`);
+        const est = estadoGrupo(c, g);
+        if (!fasesDe(recetaDe(g.recetaId)).length && !['juntado', 'pasado'].includes(est.estado)) L.push('- Su cuaderno no tiene procedimiento con fases.');
+        else L.push(`- Estado actual: ${estadoFormal(est)}.`);
+        const items = historiaPropia(c, g);
+        L.push(items.length ? '- Lo que hizo:' : '- No tiene anotaciones propias.');
+        for (const it of items) {
+          const t = textoItem(c, it);
+          L.push(`  - ${t.cuando}: ${t.que}.${t.detalles.length ? ` ${t.detalles.map(md).join('. ')}.` : ''}`);
+        }
+        const meds = items.filter((x) => x.tipo === 'medida');
+        if (meds.length) L.push(`- Medidas: ${meds.map((x) => `${K.lineasDeMedidas(x.e.medidas)} (${fechaNum(x.fecha)})`).join('; ')}.`);
+        L.push('');
+      }
+    }
+
+    // Imágenes
+    const conFotos = entradas.filter((e) => (e.fotos || []).length);
+    if (conFotos.length) {
+      L.push('## Imágenes', '', 'Una tabla por sesión (cada anotación con imágenes). «Archivo» es el nombre del archivo original.', '');
+      let s = 0;
+      for (const e of conFotos) {
+        s++;
+        const quien = e.grupoId ? `grupo «${nombreGrupo(e.grupoId, e.grupo)}»` : e.disolucion ? `disolución ${e.disolucion}` : 'sin grupo';
+        const momento = e.grupoId ? sinEmoji(K.momentoDe(c, e.grupoId, e.fecha)).replace(/ · /g, ', ') : '';
+        L.push(`### Sesión ${s} (${fechaHoraNum(e.fecha)}): ${actividadFormal(e)}, ${quien}${momento ? ` (${momento})` : ''}`);
+        if (e.nota) L.push(`Nota: ${md(e.nota)}`);
+        const filas = [];
+        for (const [i, id] of e.fotos.entries()) {
+          const f = await window.Fotos.leer(id).catch(() => null);
+          const info = K.infoFoto(e, id);
+          filas.push([String(i + 1), f ? f.nombre || '' : '(no está en este aparato)', f ? `${f.ancho} × ${f.alto}` : '', info.aumento || '', info.zona || '', info.apartado || '', c.titulos[id] || (inf.pies || {})[id] || '']);
+        }
+        L.push('');
+        tablaMd(['Nº', 'Archivo', 'Píxeles', 'Aumento', 'Zona', 'Apartado', 'Título o descripción'], filas);
+      }
+    }
+
+    // Medidas
+    const medidas = { grupos: [], filas: [] };
+    for (const p of partes) {
+      const m = K.medidasDe(c, p.amb);
+      medidas.grupos.push(...m.grupos);
+      for (const f of m.filas) { const x = medidas.filas.find((z) => z.nombre === f.nombre); if (x) Object.assign(x.celdas, f.celdas); else medidas.filas.push({ ...f, celdas: { ...f.celdas } }); }
+    }
+    if (medidas.filas.length) {
+      L.push('## Medidas (la última de cada grupo; entre paréntesis, cuántas veces se midió)', '');
+      tablaMd(['Magnitud', ...medidas.grupos.map((g) => g.nombre)], medidas.filas.map((f) => [f.nombre, ...medidas.grupos.map((g) => { const x = f.celdas[g.id]; return x ? `${K.numTexto(x.valor)}${x.unidad ? ` ${x.unidad}` : ''}${x.n > 1 ? ` (${x.n})` : ''}` : ''; })]));
+    }
+
+    // Lo demás
+    const sueltas = entradas.filter((e) => !e.grupoId && !e.disolucionId);
+    if (sueltas.length) {
+      L.push('## Otras anotaciones', '');
+      for (const e of sueltas) { const t = textoItem(c, { tipo: e.tipo, fecha: e.fecha, e }); L.push(`- ${t.cuando}: ${t.que}.${t.detalles.length ? ` ${t.detalles.map(md).join('. ')}.` : ''}`); }
+      L.push('');
+    }
+    for (const p of partes) if (p.ficha.notas && String(p.ficha.notas).trim()) L.push(`## Notas libres del cuaderno ${p.ficha.nombre}`, '', String(p.ficha.notas).trim(), '');
+    return L.join('\n').replace(/\n{3,}/g, '\n\n');
+  };
+
+  // ── Los números, al dibujar (versión 134): secciones (1., 1.1.), anexos (A, B…), tablas y figuras en
+  // el orden en que están ahora, y las citas «⟦T:t1⟧» de los textos con el número que les toca (si la
+  // tabla o la figura se quitó del informe, «(quitada)»). También las letras (a), (b)… de las imágenes
+  // y el pie de cada figura de fotos (pieFotos). Devuelve una copia de los bloques, en el mismo orden, y
+  // en .citas la función que pone los números (la usa el editor para guardar sin perder las marcas).
+  // Versión 137 (el editor «como en Word»): los títulos llevan aparte su número (prefijo) y su texto
+  // (textoPropio), las tablas qué columnas se ven (columnas) y las fotos lo de sus paneles (detalle)
+  const detalleFotos = (paneles) => paneles.filter((p) => p.texto).map((p) => (p.letra ? `${p.letra} ${p.texto}` : p.texto)).join('; ');
+  const pieFotos = (b, paneles) => {
+    if (b.pie) return b.pie;
+    const det = detalleFotos(paneles);
+    return `${b.cabeza}.${b.desc ? ` ${b.desc}` : ''}${det ? ` ${det.charAt(0).toUpperCase()}${det.slice(1)}.` : ''}`;
+  };
+  const numerar = (B) => {
+    const num = new Map();
+    let t = 0;
+    let f = 0;
+    let s = 0;
+    let ss = 0;
+    let a = 0;
+    const salida = B.map((b) => {
+      if (b.t === 'tabla') { t++; num.set(b.id, { tipo: 'Tabla', n: t }); return { ...b, n: `Tabla ${t}` }; }
+      if (b.t === 'arbol' || b.t === 'fotos') { f++; num.set(b.id, { tipo: 'Figura', n: f }); return { ...b, n: `Figura ${f}` }; }
+      let prefijo = '';
+      if (b.t === 'h1' && b.num) { s++; ss = 0; prefijo = `${s}. `; }
+      else if (b.t === 'h2' && b.num) { ss++; prefijo = `${s ? `${s}.` : ''}${ss}. `; }
+      else if (b.t === 'h1' && b.anexo) prefijo = `Anexo ${String.fromCharCode(65 + a++)}. `;
+      if (b.t === 'h1' || b.t === 'h2') return { ...b, prefijo, textoPropio: b.texto, texto: `${prefijo}${b.texto}` };
+      return b;
+    });
+    const citas = (x) => (typeof x !== 'string' ? x : x.replace(/⟦(T|F|FS):([^⟧]*)⟧/g, (todo, tipo, ids) => {
+      const [i1, i2] = ids.split(':');
+      const n1 = num.get(i1);
+      const n2 = i2 && num.get(i2);
+      if (tipo === 'FS' && n1 && n2 && n1.n !== n2.n) return `Figuras ${n1.n} a ${n2.n}`;
+      const uno = n1 || n2;
+      return uno ? `${uno.tipo} ${uno.n}` : `${tipo === 'T' ? 'tabla' : 'figura'} (quitada)`;
+    }));
+    const resultado = salida.map((b) => {
+      const x = { ...b };
+      for (const k of ['texto', 'textoPropio', 'titulo', 'observaciones', 'desc', 'cabeza', 'pie']) if (typeof x[k] === 'string') x[k] = citas(x[k]);
+      if (x.items) x.items = x.items.map(citas);
+      if (x.t === 'tabla') {
+        // (las columnas quitadas en un informe guardado no se ven)
+        const ver = x.cab.map((_, i) => !(x.ocultas || []).includes(i));
+        x.columnas = x.cab.map((_, i) => i).filter((i) => ver[i]);
+        x.cab = x.cab.filter((_, i) => ver[i]);
+        const nuevo = new Map();
+        ver.forEach((v, i) => { if (v) nuevo.set(i, nuevo.size); });
+        x.numericas = (b.numericas || []).filter((i) => nuevo.has(i)).map((i) => nuevo.get(i));
+        x.filas = x.filas.map((fila) => fila.map(citas).filter((_, i) => ver[i]));
+      }
+      if (x.t === 'fotos') {
+        x.paneles = x.paneles.map((p, i) => ({ ...p, letra: x.paneles.length > 1 ? `(${String.fromCharCode(97 + i)})` : '' }));
+        x.detalle = detalleFotos(x.paneles);
+        x.titulo = pieFotos(x, x.paneles);
+      }
+      return x;
+    });
+    resultado.citas = citas;
+    return resultado;
+  };
+  // El dibujo del árbol de un bloque: el que trae (al hacer el informe) o uno nuevo (en un informe
+  // guardado, que no guarda el dibujo: sale con los datos de ahora)
+  // nombres (versión 145): los nombres de los grupos «para el informe» ({ nombre de verdad: el del informe })
+  const arbolDeBloque = (b) => {
+    if (b.el) return b.el;
+    const r = b.amb && b.amb.recetaId && recetaDe(b.amb.recetaId);
+    const el = r ? arbolDeMuestras(leerCuaderno(), r, () => {}, K.ambito(b.amb.recetaId, b.amb.cuadernoId), 0, true) : null;
+    if (el && b.nombres) {
+      const recorrido = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let t = recorrido.nextNode(); t; t = recorrido.nextNode()) {
+        const v = t.nodeValue.trim();
+        if (b.nombres[v]) t.nodeValue = t.nodeValue.replace(v, b.nombres[v]);
+      }
+    }
+    return el;
+  };
+
+  // El informe en la pantalla (y para imprimir). Devuelve { el, listo } (listo: cuando ya están las fotos).
+  // edicion (versión 137, el editor «como en Word»; antes, cada cosa se cambiaba en un cuadro aparte): en el
+  // modo de editar de un informe guardado, cada texto se escribe ahí mismo. Lo pone el editor:
+  //   texto(el, ref, valor, { linea, pista }) — un trozo que se escribe (ref: { i, campo, fila, col, item })
+  //   bloque(el, i) — el bloque i (para elegirlo y que la barra de herramientas diga qué se puede hacer)
+  //   hueco(el, i) — «＋ Escribir el resumen…»;  panel(el, i, pi) — una imagen;  reordenar(listas) — fotos arrastradas
+  const informeHtml = (B0, { edicion: E } = {}) => {
+    const B = numerar(B0);
+    const esperas = [];
+    const caja = h('article', { class: `informe formal${E ? ' editando' : ''}` });
+    const tx = (etiqueta, props, ref, valor, op = {}) => {
+      const el = h(etiqueta, props);
+      if (E) return E.texto(el, ref, valor || '', op);
+      el.textContent = valor || '';
+      return el;
+    };
+    // (cada bloque lleva su número: así el índice salta a él y sabe por dónde se va, también sin editar)
+    const bl = (el, i) => { el.dataset.i = String(i); return E ? E.bloque(el, i) : el; };
+    const may = (s) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+    B.forEach((b, i) => {
+      if (b.t === 'portada') {
+        const c = (campo) => ({ i, campo });
+        caja.append(bl(h('header', { class: 'informe-portada' },
+          tx('h1', {}, c('titulo'), b.titulo, { linea: true }),
+          (b.autores || E) && tx('p', { class: 'informe-autores' }, c('autores'), b.autores, { linea: true, pista: 'Autor o autores' }),
+          (b.institucion || E) && tx('p', { class: 'informe-institucion' }, c('institucion'), b.institucion, { linea: true, pista: 'Centro, departamento o grupo' }),
+          tx('p', { class: 'informe-fecha' }, c('fecha'), b.fecha, { linea: true }),
+          tx('p', { class: 'informe-detalles' }, c('detalles'), b.detalles.join(' · '))), i));
+      } else if (b.t === 'h1' || b.t === 'h2') {
+        caja.append(bl(h(b.t === 'h1' ? 'h2' : 'h3', { class: b.anexo ? 'anexo' : null },
+          E && b.prefijo && h('span', { class: 'informe-prefijo', text: b.prefijo }),
+          E ? tx('span', {}, { i, campo: 'texto' }, b.textoPropio, { linea: true, pista: 'Título' }) : b.texto), i));
+      } else if (b.t === 'hueco') { if (E) caja.append(E.hueco(h('p', { class: 'informe-hueco', text: b.texto }), i)); }
+      else if (b.t === 'salto') caja.append(bl(h('div', { class: 'informe-salto' }, E && h('span', { text: 'Salto de página' })), i));
+      else if (b.t === 'p') caja.append(bl(tx('p', { class: b.clase ? `informe-${b.clase}` : null }, { i, campo: 'texto' }, b.texto, { pista: 'Escribe aquí…' }), i));
+      else if (b.t === 'paso') caja.append(bl(h('p', { class: 'informe-paso' }, h('b', { text: `${b.n}. ` }), tx('span', {}, { i, campo: 'texto' }, b.texto)), i));
+      else if (b.t === 'lista') {
+        caja.append(bl(h(b.numerada ? 'ol' : 'ul', { class: 'informe-lista' }, b.items.map((t, k) => tx('li', {}, { i, campo: 'item', item: k }, t, { linea: true, pista: 'Escribe aquí…' }))), i));
+      } else if (b.t === 'tabla') {
+        // (una tabla larga se puede partir entre páginas; si no, deja media página en blanco)
+        caja.append(bl(h('figure', { class: `informe-tabla-caja${b.filas.length > 6 || b.filas.flat().join('').length > 900 ? ' larga' : ''}` },
+          h('figcaption', {}, h('b', { text: `${b.n}. ` }), tx('span', {}, { i, campo: 'titulo' }, b.titulo)),
+          h('table', { class: 'informe-tabla' },
+            h('thead', {}, h('tr', {}, b.cab.map((t, k) => tx('th', {}, { i, campo: 'cab', col: b.columnas[k] }, t, { linea: true })))),
+            h('tbody', {}, b.filas.map((f, fi) => h('tr', {}, f.map((t, k) => tx('td', { class: b.numericas.includes(k) ? 'informe-numero' : b.cab[k] === 'Fecha' ? 'informe-fecha-celda' : null },
+              { i, campo: 'celda', fila: fi, col: b.columnas[k] }, t))))))), i));
+      } else if (b.t === 'arbol') {
+        const el = arbolDeBloque(b);
+        caja.append(bl(h('figure', { class: 'informe-figura informe-arbol' }, el ? el.querySelector('.arbol-caja') : h('p', { class: 'nota', text: '(el dibujo ya no se puede hacer: su receta no está)' }),
+          h('figcaption', {}, h('b', { text: `${b.n}. ` }), tx('span', {}, { i, campo: 'titulo' }, b.titulo))), i));
+      } else if (b.t === 'fotos') {
+        // Una figura con sus paneles (a), (b)…: 1 foto a todo el ancho, 2 o 4 en dos columnas, 3, 5 o 6 en tres
+        const k = b.paneles.length;
+        const cols = b.cols ? Math.min(b.cols, Math.max(k, 1)) : k <= 1 ? 1 : k === 2 || k === 4 ? 2 : 3;
+        // (el pie: entero a mano, o lo que pone el informe + «qué se ve» + lo de cada imagen)
+        // (versión 145: también la parte que pone el informe —de qué son, grupo, fase, fecha— se escribe ahí mismo;
+        // antes, para cambiarla había que pasar todo el pie a mano)
+        const pie = !E ? b.titulo
+          : b.pie ? tx('span', {}, { i, campo: 'pie' }, b.pie)
+            : [tx('span', { class: 'informe-cabeza' }, { i, campo: 'cabeza' }, b.cabeza, { pista: 'De qué son estas imágenes' }), h('span', { text: '.' }), ' ',
+              tx('span', { class: 'informe-desc' }, { i, campo: 'desc' }, b.desc, { pista: 'Qué se ve en esta figura' }), b.detalle && h('span', { text: ` ${may(b.detalle)}.` })];
+        caja.append(bl(h('figure', { class: 'informe-figura informe-fotos-fig' },
+          h('div', { class: 'informe-paneles', style: `grid-template-columns: repeat(${cols}, 1fr)`, 'data-lista': E ? String(i) : null }, b.paneles.map((p, pi) => {
+            const img = h('img', { alt: p.texto || b.titulo, ondragstart: (e) => e.preventDefault() });
+            // (en el papel, a unos 300 ppp: una hoja A4 son unos 2000 px de ancho, repartidos entre las columnas)
+            esperas.push(urlDocumento(p.id, Math.round(2000 / cols)).then((u) => { if (u) { img.src = u; return img.decode().catch(() => {}); } img.alt = '(foto borrada)'; return null; }).catch(() => {}));
+            const el = h('div', { class: 'informe-panel', 'data-foto': p.id, 'data-id': E ? p.id : null }, img, p.letra && h('span', { class: 'informe-letra', text: p.letra }),
+              // (editando, lo de cada imagen se escribe debajo de ella —versión 145—; en el papel va en el pie)
+              E && tx('span', { class: 'informe-panel-texto' }, { i, campo: 'panel', item: pi }, p.texto, { linea: true, pista: 'Qué se ve (aumento, zona…)' }));
+            return E ? E.panel(el, i, pi) : el;
+          })),
+          h('figcaption', {}, h('b', { text: `${b.n}. ` }), pie),
+          (b.observaciones || (E && b.finSesion)) && h('p', { class: 'informe-observaciones' }, h('b', { text: 'Observaciones: ' }),
+            tx('span', {}, { i, campo: 'obs' }, b.observaciones, { pista: 'Lo que se observa en estas imágenes' }))), i));
+      }
+    });
+    // Las imágenes, manteniendo pulsado y arrastrando (versión 135, lo pidió el usuario: «hay fotos que has
+    // dividido en dos tandas y no puedo cambiarlas de lugar; que en vez de las flechas se pueda manteniendo
+    // pulsado y arrastrando»): dentro de su figura o a otra
+    if (E) mantenerYArrastrar(caja, (listas) => E.reordenar(listas), { rejilla: true });
+    return { el: caja, listo: Promise.all(esperas) };
+  };
+
+  // Una librería de vendor/ (una sola vez)
+  const vendorCargado = {};
+  const cargarVendor = (src) => {
+    if (!vendorCargado[src]) {
+      vendorCargado[src] = new Promise((ok, mal) => {
+        const s = h('script', { src });
+        s.onload = ok;
+        s.onerror = () => { delete vendorCargado[src]; mal(new Error(`No se ha podido cargar ${src}`)); };
+        document.head.append(s);
+      });
+    }
+    return vendorCargado[src];
+  };
+  // El dibujo del árbol (SVG) como PNG, para Word: se copian a cada elemento los estilos que le da la
+  // hoja de estilos (si no, al sacarlo de la página perdería colores y letras)
+  const svgAPng = async (svg) => {
+    const marco = h('div', { class: 'informe-hoja', style: 'position: fixed; left: -100000px; top: 0;' }, h('article', { class: 'informe formal' }, svg));
+    document.body.append(marco);
+    try {
+      const copia = svg.cloneNode(true);
+      const de = [svg, ...svg.querySelectorAll('*')];
+      const a = [copia, ...copia.querySelectorAll('*')];
+      const PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linecap', 'stroke-opacity', 'opacity', 'font-size', 'font-family', 'font-weight', 'font-style', 'text-anchor', 'dominant-baseline', 'paint-order', 'visibility', 'display'];
+      de.forEach((x, i) => { const cs = getComputedStyle(x); a[i].setAttribute('style', PROPS.map((p) => `${p}:${cs.getPropertyValue(p)}`).join(';')); });
+      const r = svg.getBoundingClientRect();
+      const ancho = Math.ceil(Number(svg.getAttribute('width')) || r.width);
+      const alto = Math.ceil(Number(svg.getAttribute('height')) || r.height);
+      copia.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      copia.setAttribute('width', ancho);
+      copia.setAttribute('height', alto);
+      const img = new Image();
+      img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(copia))}`;
+      await img.decode();
+      const k = 2;
+      const lienzo = h('canvas', { width: ancho * k, height: alto * k });
+      const ctx = lienzo.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, lienzo.width, lienzo.height);
+      ctx.drawImage(img, 0, 0, lienzo.width, lienzo.height);
+      const blob = await new Promise((ok) => lienzo.toBlob(ok, 'image/png'));
+      return { datos: new Uint8Array(await blob.arrayBuffer()), ancho, alto };
+    } finally { marco.remove(); }
+  };
+  // El modelo, en Word (.docx). Devuelve un Blob
+  const informeDocx = async (B0) => {
+    const B = numerar(B0);
+    await cargarVendor('vendor/docx.js');
+    const D = window.docx;
+    const hijos = [];
+    const ANCHO_MAX = 600; // px (unos 16 cm: el ancho de la página menos los márgenes)
+    const imagen = (datos, ancho, alto, maximo = ANCHO_MAX) => {
+      const k = Math.min(1, maximo / ancho, 700 / alto);
+      return new D.Paragraph({ alignment: D.AlignmentType.CENTER, keepNext: true, children: [new D.ImageRun({ data: datos, transformation: { width: Math.round(ancho * k), height: Math.round(alto * k) } })] });
+    };
+    const pie = (nn, texto) => new D.Paragraph({ alignment: D.AlignmentType.JUSTIFIED, spacing: { after: 200 }, children: [new D.TextRun({ text: `${nn}. `, bold: true, size: 20 }), new D.TextRun({ text: texto, size: 20 })] });
+    // (tablas de tres rayas, como en las revistas: arriba, bajo la cabecera y abajo)
+    const NADA = { style: D.BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+    const RAYA = { style: D.BorderStyle.SINGLE, size: 8, color: '1B1C22' };
+    const celda = (texto, { cabecera, numero } = {}) => new D.TableCell({
+      borders: { top: NADA, left: NADA, right: NADA, bottom: cabecera ? RAYA : NADA },
+      margins: { top: 40, bottom: 40, left: 80, right: 80 },
+      children: [new D.Paragraph({ alignment: numero ? D.AlignmentType.RIGHT : D.AlignmentType.LEFT, children: [new D.TextRun({ text: String(texto), bold: Boolean(cabecera), size: 18 })] })],
+    });
+    for (const b of B) {
+      if (b.t === 'portada') {
+        hijos.push(new D.Paragraph({ heading: D.HeadingLevel.TITLE, alignment: D.AlignmentType.CENTER, children: [new D.TextRun({ text: b.titulo })] }));
+        if (b.autores) hijos.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.TextRun({ text: b.autores, size: 24 })] }));
+        if (b.institucion) hijos.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.TextRun({ text: b.institucion, italics: true })] }));
+        hijos.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.TextRun({ text: b.fecha })] }));
+        hijos.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { after: 400 }, children: [new D.TextRun({ text: b.detalles.join(' · '), size: 18, color: '555555' })] }));
+      } else if (b.t === 'h1') hijos.push(new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, pageBreakBefore: Boolean(b.anexo), children: [new D.TextRun({ text: b.texto })] }));
+      else if (b.t === 'h2') hijos.push(new D.Paragraph({ heading: D.HeadingLevel.HEADING_2, children: [new D.TextRun({ text: b.texto })] }));
+      else if (b.t === 'salto') hijos.push(new D.Paragraph({ children: [new D.PageBreak()] }));
+      else if (b.t === 'p') {
+        const rotulo = b.clase === 'fase' || b.clase === 'subfase';
+        hijos.push(new D.Paragraph({ alignment: rotulo ? D.AlignmentType.LEFT : D.AlignmentType.JUSTIFIED, spacing: { before: b.clase === 'fase' ? 160 : 0, after: rotulo ? 60 : 120 }, keepNext: rotulo,
+          children: [new D.TextRun({ text: b.texto, italics: b.clase === 'nota' || b.clase === 'resumen' || b.clase === 'subfase', bold: b.clase === 'fase', size: b.clase === 'nota' ? 20 : undefined })] }));
+      } else if (b.t === 'paso') hijos.push(new D.Paragraph({ alignment: D.AlignmentType.JUSTIFIED, indent: { left: 360, hanging: 360 }, children: [new D.TextRun({ text: `${b.n}. `, bold: true }), new D.TextRun({ text: b.texto })] }));
+      else if (b.t === 'lista') {
+        b.items.forEach((x, i) => hijos.push(new D.Paragraph({ indent: { left: 360, hanging: 360 }, children: [new D.TextRun({ text: `${b.numerada ? `[${i + 1}]` : '•'} ` }), new D.TextRun({ text: x })] })));
+      } else if (b.t === 'tabla') {
+        hijos.push(new D.Paragraph({ keepNext: true, spacing: { before: 160 }, children: [new D.TextRun({ text: `${b.n}. `, bold: true, size: 20 }), new D.TextRun({ text: b.titulo, size: 20 })] }));
+        hijos.push(new D.Table({ width: { size: 100, type: D.WidthType.PERCENTAGE },
+          borders: { top: { ...RAYA, size: 12 }, bottom: { ...RAYA, size: 12 }, left: NADA, right: NADA, insideHorizontal: NADA, insideVertical: NADA },
+          rows: [new D.TableRow({ tableHeader: true, children: b.cab.map((x) => celda(x, { cabecera: true })) }),
+            ...b.filas.map((f) => new D.TableRow({ children: f.map((x, i) => celda(x, { numero: b.numericas.includes(i) })) }))] }));
+        hijos.push(new D.Paragraph({ children: [] }));
+      } else if (b.t === 'arbol') {
+        const dibujo = arbolDeBloque(b);
+        const svg = dibujo && dibujo.querySelector('svg');
+        if (svg) {
+          try { const p = await svgAPng(svg); hijos.push(imagen(p.datos, p.ancho, p.alto)); } catch { /* sin dibujo: solo el pie */ }
+        }
+        hijos.push(pie(b.n, b.titulo));
+      } else if (b.t === 'fotos') {
+        // Los paneles, en una tabla sin bordes (como en la pantalla: 1, 2 o 3 por fila), con su letra debajo
+        const k = b.paneles.length;
+        const cols = b.cols ? Math.min(b.cols, Math.max(k, 1)) : k === 1 ? 1 : k === 2 || k === 4 ? 2 : 3;
+        const anchoPanel = cols === 1 ? (b.cols ? ANCHO_MAX - 12 : 450) : Math.floor(ANCHO_MAX / cols) - 12;
+        const celdas = [];
+        for (const p of b.paneles) {
+          const parrafos = [];
+          // (la foto, con los píxeles que necesita a unos 300 ppp en el ancho que ocupa: no hace falta más;
+          // los px de Word son de 96 ppp. Versión 141; antes iba la vista de 2000 px)
+          const v = await window.Fotos.paraDocumento(p.id, Math.round(anchoPanel * 300 / 96)).catch(() => null);
+          if (v) {
+            try {
+              const kk = Math.min(1, anchoPanel / v.ancho, (k === 1 ? 600 : 360) / v.alto);
+              parrafos.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, keepNext: true, children: [new D.ImageRun({ data: new Uint8Array(await v.blob.arrayBuffer()), transformation: { width: Math.round(v.ancho * kk), height: Math.round(v.alto * kk) } })] }));
+            } catch { /* sin foto: solo la letra */ }
+          }
+          if (p.letra) parrafos.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, keepNext: true, children: [new D.TextRun({ text: p.letra, size: 20 })] }));
+          celdas.push(parrafos.length ? parrafos : [new D.Paragraph({ children: [] })]);
+        }
+        const SIN = { style: D.BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+        const filas = [];
+        for (let i = 0; i < celdas.length; i += cols) {
+          const trozo = celdas.slice(i, i + cols);
+          while (trozo.length < cols) trozo.push([new D.Paragraph({ children: [] })]);
+          filas.push(new D.TableRow({ cantSplit: true, children: trozo.map((ps) => new D.TableCell({ children: ps, margins: { top: 40, bottom: 40, left: 60, right: 60 },
+            borders: { top: SIN, bottom: SIN, left: SIN, right: SIN } })) }));
+        }
+        hijos.push(new D.Table({ width: { size: 100, type: D.WidthType.PERCENTAGE }, borders: { top: SIN, bottom: SIN, left: SIN, right: SIN, insideHorizontal: SIN, insideVertical: SIN }, rows: filas }));
+        hijos.push(pie(b.n, b.titulo));
+        // (la nota de la sesión, debajo; cada línea en la suya)
+        if (b.observaciones) {
+          hijos.push(new D.Paragraph({ alignment: D.AlignmentType.JUSTIFIED, spacing: { after: 240 },
+            children: [new D.TextRun({ text: 'Observaciones: ', bold: true, size: 20 }),
+              ...b.observaciones.split('\n').map((l, i) => new D.TextRun({ text: l, size: 20, ...(i > 0 ? { break: 1 } : {}) }))] }));
+        }
+      }
+    }
+    const doc = new D.Document({
+      creator: 'Química',
+      title: (B[0] && B[0].titulo) || 'Informe',
+      styles: { default: { document: { run: { font: 'Times New Roman', size: 22 } } } },
+      sections: [{ properties: { page: { margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } },
+        // (el número de página abajo: «Página 2 de 9»)
+        footers: { default: new D.Footer({ children: [new D.Paragraph({ alignment: D.AlignmentType.CENTER,
+          children: [new D.TextRun({ children: ['Página ', D.PageNumber.CURRENT, ' de ', D.PageNumber.TOTAL_PAGES], size: 18, color: '555555' })] })] }) },
+        children: hijos }],
+    });
+    return D.Packer.toBlob(doc);
+  };
+  // Guarda un archivo binario: en Android, en Descargas (plugin GuardarArchivo, por trozos en base64);
+  // en el iPhone, la hoja de compartir; en el PC, una descarga
+  const guardarBinario = async (blob, nombre, tipo) => {
+    const plugin = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.GuardarArchivo;
+    if (plugin) {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const TROZO = 3 * 256 * 1024; // (múltiplo de 3: cada trozo en base64 sin relleno en medio)
+      for (let i = 0, primera = true; i < bytes.length || primera; i += TROZO, primera = false) {
+        let bin = '';
+        const parte = bytes.subarray(i, i + TROZO);
+        for (let j = 0; j < parte.length; j += 0x8000) bin += String.fromCharCode(...parte.subarray(j, j + 0x8000));
+        await plugin.escribir({ nombre, texto: btoa(bin), base64: true, tipo, primera, ultima: i + TROZO >= bytes.length });
+      }
+      return 'la carpeta Descargas del móvil';
+    }
+    const archivo = new File([blob], nombre, { type: tipo });
+    if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
+      try { await navigator.share({ files: [archivo], title: nombre }); return 'donde hayas elegido'; } catch (e) { if (e && e.name === 'AbortError') throw e; }
+    }
+    const enlace = h('a', { href: URL.createObjectURL(archivo), download: nombre });
+    document.body.append(enlace);
+    enlace.click();
+    enlace.remove();
+    return 'tus descargas';
   };
   // Imprimir (o guardar como PDF) un informe: se copia a #impresion, lo único que se imprime
   // (@media print en estilos.css)
@@ -3397,45 +4514,1475 @@
     window.print();
     document.title = antes;
   };
-  const abrirInforme = (receta, amb, ficha) => {
-    const { cuerpo } = abrirPanel('📄 Informe', null, () => {
+  // Un nombre de archivo sin caracteres raros
+  const nombreArchivo = (t) => String(t || 'Informe').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Informe';
+
+  // ─── Los informes (versión 134) ───
+  // El usuario: «que haya un informe estándar pero luego puedas editarlo como te plazca, y que se quede
+  // guardado aparte para seguir editando; que aparezca hacer informe nuevo, seguir con el último y una
+  // carpeta». Al tocar «Hacer el informe» (abrirInforme): «＋ Informe nuevo» hace el estándar con los datos
+  // de ahora y lo guarda (c.informes: pasa al PC); «✏️ Seguir con…» abre el último; «📁 Carpeta», todos.
+  // Cada informe guardado se edita a gusto (abrirInformeGuardado): cambiar textos, mover, quitar bloques,
+  // filas, columnas e imágenes, añadir párrafos y títulos. Y su duda: «algo que quiero borrar en el
+  // informe pero que se quede en notas; pero también el informe me parece una forma rápida de corregir
+  // las notas»: quitar, mover o esconder solo cambia el informe; al cambiar una frase, si el trozo cambiado
+  // es una nota de la bitácora (o el nombre de un grupo, el título de una foto, un texto de la receta…),
+  // se ofrece corregirlo también allí (marcado de entrada), y entonces cambia en todo el informe.
+
+  // Elegir una de varias cosas: opciones [{ texto, peligro?, … }] → la elegida o null
+  const elegir = ({ texto, detalle, opciones }) => new Promise((resolver) => {
+    let r = null;
+    const fondo = h('div', { class: 'dialogo-fondo', onclick: (e) => { if (e.target === fondo) atras(); } },
+      h('div', { class: 'dialogo' },
+        h('p', { class: 'dialogo-texto', text: texto }),
+        detalle && (typeof detalle === 'string' ? h('p', { class: 'dialogo-detalle', text: detalle }) : detalle),
+        h('div', { class: 'menu-opciones' }, opciones.filter(Boolean).map((o) => h('button', { class: `boton ${o.peligro ? 'peligro' : 'secundario'}`, text: o.texto, onclick: () => { r = o; atras(); } }))),
+        h('div', { class: 'dialogo-botones' }, h('button', { class: 'boton secundario', text: 'Cancelar', onclick: atras }))));
+    document.body.append(fondo);
+    abrirCapa(fondo, () => resolver(r));
+  });
+  // Lo que se guarda de un informe: sus bloques, sin el dibujo del árbol (se vuelve a hacer al verlo)
+  const paraGuardar = (B) => B.map((b) => { const { el, ...x } = b; return JSON.parse(JSON.stringify(x)); });
+
+  // ── Corregir en la bitácora lo corregido en un informe ──
+  // El principio y el final iguales de dos textos: { p, s } (lo cambiado está entre p y largo − s)
+  const comunes = (a, b) => {
+    let p = 0;
+    while (p < a.length && p < b.length && a[p] === b[p]) p++;
+    let s = 0;
+    while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+    return { p, s };
+  };
+  // El texto de verdad (raw), cambiado como cambió el trozo que se veía de él (forma → nuevo); null si no se sabe
+  const cambiarDentro = (raw, forma, nuevo) => {
+    if (raw === forma) return nuevo;
+    // (el texto de la bitácora con espacios de más —«lavado \nSe…», «.  Se»— y en el informe, limpio: es el
+    // mismo texto; sin esto, reescribirlo entero no se reconocía como suyo; versión 144)
+    const junto = (t) => t.replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
+    if (junto(raw) === junto(forma)) return nuevo;
+    const { p, s } = comunes(forma, nuevo);
+    const viejoMedio = forma.slice(p, forma.length - s);
+    const nuevoMedio = nuevo.slice(p, nuevo.length - s);
+    if (viejoMedio && raw.split(viejoMedio).length === 2) return raw.replace(viejoMedio, () => nuevoMedio);
+    const ancla = forma.slice(Math.max(0, p - 15), p);
+    if (!viejoMedio && ancla && raw.split(ancla).length === 2) { const k = raw.indexOf(ancla) + ancla.length; return raw.slice(0, k) + nuevoMedio + raw.slice(k); }
+    return null;
+  };
+  // Las formas en que se ve un texto de la bitácora en el informe (tal cual, sin emojis, en una línea)
+  const formasDe = (v) => [...new Set([String(v), sinEmojiLineas(v), sinEmoji(v)])].filter(Boolean);
+  // Si lo cambiado de un texto del informe (viejo → nuevo) cae dentro de un texto de la bitácora (fuentes),
+  // cuál y cómo queda: [{ fuente, viejoTexto, nuevoTexto, nuevoRaw }] (el más pequeño que lo contiene)
+  const detectarCambio = (viejo, nuevo, fuentes) => {
+    if (viejo === nuevo) return [];
+    const { p, s } = comunes(viejo, nuevo);
+    const fin = viejo.length - s;
+    const hallados = [];
+    for (const f of fuentes) {
+      for (const forma of formasDe(f.valor)) {
+        let k = viejo.indexOf(forma);
+        let hecho = false;
+        while (k >= 0 && !hecho) {
+          if (k <= p && fin <= k + forma.length) {
+            const nuevoTexto = nuevo.slice(k, k + forma.length + (nuevo.length - viejo.length));
+            const nuevoRaw = cambiarDentro(f.valor, forma, nuevoTexto);
+            if (nuevoRaw !== null) { hallados.push({ fuente: f, viejoTexto: forma, nuevoTexto, nuevoRaw }); hecho = true; }
+          }
+          k = viejo.indexOf(forma, k + 1);
+        }
+        if (hecho) break;
+      }
+    }
+    hallados.sort((a, b) => a.viejoTexto.length - b.viejoTexto.length);
+    return hallados.slice(0, 1);
+  };
+  // Cambia un texto por otro en todos los textos de unos bloques (solo palabras enteras)
+  const reemplazarEnBloques = (B, viejo, nuevo) => {
+    if (!viejo || viejo === nuevo) return;
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${viejo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'gu');
+    const r = (s) => (typeof s === 'string' ? s.replace(re, () => nuevo) : s);
+    for (const b of B) {
+      for (const k of ['texto', 'titulo', 'observaciones', 'desc', 'cabeza', 'pie', 'autores', 'institucion']) if (typeof b[k] === 'string') b[k] = r(b[k]);
+      if (b.items) b.items = b.items.map(r);
+      if (b.filas) b.filas = b.filas.map((f) => f.map(r));
+      if (b.detalles) b.detalles = b.detalles.map(r);
+      for (const p of b.paneles || []) p.texto = r(p.texto);
+    }
+  };
+  // Cambiar el nombre de un grupo (y donde se le nombra en la bitácora), o de una disolución
+  const renombrarGrupo = (id, nombre) => cambiarCuaderno((d) => {
+    const x = K.grupoDe(d, id);
+    if (!x || !nombre.trim()) return;
+    x.nombre = nombre.trim().slice(0, 60);
+    for (const e of d.entradas) {
+      if (e.grupoId === x.id) e.grupo = x.nombre;
+      if (e.nuevoId === x.id) e.nuevo = x.nombre;
+      if ((e.tipo === 'recibir' || e.tipo === 'llegar') && e.desdeId === x.id) e.desde = x.nombre;
+    }
+  });
+  const renombrarDisolucion = (id, nombre) => cambiarCuaderno((d) => {
+    const y = K.disolucionDe(d, id);
+    if (!y || !nombre.trim()) return;
+    y.nombre = nombre.trim().slice(0, 80);
+    for (const e of d.entradas) {
+      if (e.disolucionId === id) e.disolucion = y.nombre;
+      for (const u of e.disoluciones || []) if (u.id === id) u.nombre = y.nombre;
+    }
+  });
+  // Los textos de la bitácora (o de la receta, o de la ficha del cuaderno) de los que sale algo del
+  // informe, con cómo se cambian: [{ etiqueta, valor, escribir(v) }]. o: el «editar» del bloque, de su
+  // fila o de su línea. inf: { amb } del informe (para los textos de los informes nuevos)
+  const fuentesDe = (c, o, x) => {
+    const l = [];
+    const add = (etiqueta, valor, escribir) => { if (valor != null && String(valor).trim()) l.push({ etiqueta, valor: String(valor), escribir }); };
+    // (un texto de varias líneas o párrafos: también cada línea, que es como sale en las listas)
+    const conLineas = (etiqueta, valor, escribir) => {
+      add(etiqueta, valor, escribir);
+      const v = String(valor || '');
+      for (const sep of ['\n', /\n\s*\n/]) {
+        const trozos = v.split(sep);
+        if (trozos.length > 1) trozos.forEach((t, i) => add(etiqueta, t.trim(), (n) => { const copia = v.split(sep); copia[i] = n; escribir(copia.join(typeof sep === 'string' ? sep : '\n\n')); }));
+      }
+    };
+    if (!o) return l;
+    const enEntrada = (id, campo) => (v) => cambiarCuaderno((d) => { const e = d.entradas.find((y) => y.id === id); if (!e) return; if (v) e[campo] = v; else delete e[campo]; });
+    if (o.tipo === 'apuntes') {
+      for (const id of o.ids || []) {
+        const e = c.entradas.find((y) => y.id === id);
+        if (!e) continue;
+        conLineas('en la bitácora (la nota del apunte)', e.nota, enEntrada(id, 'nota'));
+        add('en la bitácora (lo distinto a la receta)', e.distinto, enEntrada(id, 'distinto'));
+        add('en la bitácora (la técnica del análisis)', e.tecnica, enEntrada(id, 'tecnica'));
+      }
+    }
+    if (o.tipo === 'grupo') {
+      const g = K.grupoDe(c, o.id);
+      if (g) {
+        add('el nombre del grupo (en todo el cuaderno)', g.nombre, (v) => renombrarGrupo(o.id, v));
+        add('las características del grupo', g.caracteristicas, (v) => cambiarCuaderno((d) => { const y = K.grupoDe(d, o.id); if (y) { if (v) y.caracteristicas = v; else delete y.caracteristicas; } }));
+      }
+    }
+    if (o.tipo === 'disolucion') {
+      const d = K.disolucionDe(c, o.id);
+      if (d) {
+        add('el nombre de la disolución (en todo el cuaderno)', d.nombre, (v) => renombrarDisolucion(o.id, v));
+        add('cuánta se preparó', d.preparada, (v) => cambiarCuaderno((x2) => { const y = K.disolucionDe(x2, o.id); if (y) y.preparada = v; }));
+        for (const e of c.entradas.filter((y) => y.disolucionId === o.id && y.nota)) conLineas('en la bitácora (una nota de la disolución)', e.nota, enEntrada(e.id, 'nota'));
+      }
+    }
+    if (o.tipo === 'receta') {
+      const r = recetaDe(o.recetaId);
+      if (r) conLineas(`en la receta «${r.nombre}»`, r[o.campo], (v) => { const r2 = recetaDe(o.recetaId); if (r2) { r2[o.campo] = v; guardarRecetas(); } });
+    }
+    if (o.tipo === 'notasCuaderno') {
+      const k = c.cuadernos.find((y) => y.id === o.cuadernoId);
+      if (k) conLineas('en las notas del cuaderno', k.notas, (v) => cambiarCuaderno((d) => { const y = d.cuadernos.find((z) => z.id === o.cuadernoId); if (y) y.notas = v; }));
+    }
+    if (o.tipo === 'texto' && x) {
+      const ficha = K.fichaCuaderno(c, x.amb);
+      conLineas('en los textos para los informes nuevos', (ficha.informe || {})[o.clave], (v) => guardarTextoInforme(x.amb, ficha, o.clave, v));
+    }
+    if (o.tipo === 'fotosPie') {
+      const e = c.entradas.find((y) => y.id === o.entradaId);
+      if (e) {
+        add('en la bitácora (la técnica del análisis)', e.tecnica, enEntrada(e.id, 'tecnica'));
+        if (e.grupoId) l.push(...fuentesDe(c, { tipo: 'grupo', id: e.grupoId }).slice(0, 1));
+        for (const id of o.fotos || []) {
+          add('el título de la foto', c.titulos[id], (v) => cambiarCuaderno((d) => { if (v) d.titulos[id] = v.slice(0, 200); else delete d.titulos[id]; }));
+          add('la zona de la foto', K.infoFoto(e, id).zona, (v) => cambiarCuaderno((d) => { const y = d.entradas.find((z) => z.id === e.id); if (y && y.fotosInfo && y.fotosInfo[id]) { if (v) y.fotosInfo[id].zona = v.slice(0, 40); else delete y.fotosInfo[id].zona; } }));
+        }
+      }
+    }
+    return l;
+  };
+  // Los textos del informe que se guardan con el cuaderno (para los informes nuevos)
+  const guardarTextoInforme = (amb, ficha, clave, v) => cambiarCuaderno((d) => {
+    let x = d.cuadernos.find((y) => y.id === ficha.id);
+    if (!x) { x = { id: ficha.id, recetaId: amb.recetaId || null, nombre: ficha.nombre, fecha: 0 }; d.cuadernos.push(x); }
+    const nuevo = { ...(x.informe || {}), [clave]: v };
+    if (!v) delete nuevo[clave];
+    x.informe = nuevo;
+  });
+
+  // ── Correcciones del informe para la bitácora (versión 143; lo pidió el usuario: «que en la bitácora luego me
+  // salga una lista para aceptar cambios»). Lo corregido en un informe en un texto que viene de la bitácora, sin
+  // marcar «Corregir también…», queda como propuesta en el informe (x.propuestas: { id, fecha, enlace, etiqueta,
+  // viejo, nuevo, nota? }); en la bitácora del cuaderno sale la lista para aceptarlas o descartarlas ──
+  const propuestasDe = (c, amb) => K.informesDe(c, amb).flatMap((x) => (x.propuestas || []).map((p) => ({ x, p })));
+  const quitarPropuesta = (informeId, propId) => cambiarCuaderno((d) => {
+    const y = (d.informes || []).find((z) => z.id === informeId);
+    if (y && y.propuestas) { y.propuestas = y.propuestas.filter((q) => q.id !== propId); if (!y.propuestas.length) delete y.propuestas; y.mod = Date.now(); }
+  });
+  // Pasa una propuesta a la bitácora: 'ok', o 'cambiado' si allí ya no pone lo que ponía (no se pisa)
+  const aceptarPropuesta = (x, p) => {
+    const c = leerCuaderno();
+    if (p.nota) {
+      const e = c.entradas.find((y) => y.id === p.nota);
+      if (!e || (e.nota && e.nota !== p.viejo)) return 'cambiado';
+      cambiarCuaderno((d) => { const y = d.entradas.find((z) => z.id === p.nota); if (y) y.nota = p.nuevo; });
+    } else {
+      const f = fuentesDe(c, p.enlace, { amb: K.ambito(x.recetaId, x.cuadernoId) }).find((y) => y.etiqueta === p.etiqueta && y.valor === p.viejo);
+      if (!f) return 'cambiado';
+      f.escribir(p.nuevo);
+    }
+    quitarPropuesta(x.id, p.id);
+    return 'ok';
+  };
+  // Lo cambiado, como en el control de cambios de Word: lo de antes tachado y lo nuevo subrayado, con un poco de contexto
+  const diferenciaDe = (viejo, nuevo) => {
+    let { p, s } = comunes(viejo, nuevo);
+    // (al cambiar una cosa por otra, palabras enteras: una letra sola tachada apenas se ve)
+    if (viejo.length - s > p && nuevo.length - s > p) {
+      while (p > 0 && /\S/.test(viejo[p - 1])) p--;
+      while (s > 0 && /\S/.test(viejo[viejo.length - s])) s--;
+    }
+    const ini = Math.max(0, p - 45);
+    const fin = Math.min(viejo.length, viejo.length - s + 45);
+    return h('p', { class: 'propuesta-cambio' },
+      h('span', { text: `${ini > 0 ? '…' : ''}${viejo.slice(ini, p)}` }),
+      viejo.length - s > p && h('del', { text: viejo.slice(p, viejo.length - s) }),
+      nuevo.length - s > p && h('ins', { text: nuevo.slice(p, nuevo.length - s) }),
+      h('span', { text: `${viejo.slice(viejo.length - s, fin)}${fin < viejo.length ? '…' : ''}` }));
+  };
+  // El recuadro de la bitácora (null si no hay ninguna)
+  const listaPropuestas = (c, amb, alCambiar) => {
+    const lista = propuestasDe(c, amb);
+    if (!lista.length) return null;
+    const deDonde = ({ p }) => {
+      const e = p.enlace && p.enlace.tipo === 'apuntes' && c.entradas.find((y) => (p.enlace.ids || []).includes(y.id));
+      // («en la bitácora (la nota del apunte)» → «la nota del apunte del 23/09/2026 · grupo»)
+      const sitio = (/\(([^)]+)\)/.exec(p.etiqueta) || [])[1] || sinEmoji(p.etiqueta).replace(/^en /, '');
+      return e ? `${sitio} del ${fechaNum(e.fecha)}${e.grupo ? ` · ${(K.grupoDe(c, e.grupoId) || e).nombre || e.grupo}` : ''}` : sitio;
+    };
+    const aceptar = (todas) => {
+      let mal = 0;
+      for (const it of todas) if (aceptarPropuesta(it.x, it.p) === 'cambiado') mal++;
+      avisar(mal ? `⚠️ ${mal === 1 ? 'Una no se ha podido pasar' : `${mal} no se han podido pasar`}: en la bitácora ese texto ya ha cambiado. Descártala o corrígelo a mano.` : todas.length > 1 ? `✅ ${todas.length} correcciones pasadas a la bitácora` : '✅ Pasado a la bitácora');
+      alCambiar();
+    };
+    return h('div', { class: 'propuestas' },
+      h('div', { class: 'propuestas-cabeza' },
+        h('b', { text: `✏️ Correcciones del informe (${lista.length})` }),
+        lista.length > 1 && h('button', { class: 'chip', text: '✓ Aceptar todas', onclick: () => aceptar(lista) })),
+      h('p', { class: 'nota', text: 'Lo corregiste en un informe y aún no está en la bitácora. Acéptalo para cambiarlo aquí también, o descártalo (en el informe se queda como lo dejaste).' }),
+      lista.map((it) => h('div', { class: 'propuesta' },
+        h('small', { class: 'nota', text: `«${it.x.nombre}» · ${deDonde(it)} · ${fechaHoraNum(it.p.fecha)}` }),
+        diferenciaDe(it.p.viejo || '', it.p.nuevo || ''),
+        h('div', { class: 'chips' },
+          h('button', { class: 'chip', text: '✓ Aceptar', onclick: () => aceptar([it]) }),
+          h('button', { class: 'chip', text: '✗ Descartar', onclick: () => { quitarPropuesta(it.x.id, it.p.id); avisar('Descartada: la bitácora se queda como estaba'); alCambiar(); } })))));
+  };
+
+  // ── «Hacer el informe»: nuevo, seguir con el último, carpeta; y cómo se hacen los nuevos ──
+  const abrirInforme = (receta, amb, ficha, alVolver) => {
+    const { cuerpo } = abrirPanel('📄 Informes', null, alVolver);
+    const cid = ficha.id;
+    const fichaDeAhora = () => {
+      const c = leerCuaderno();
+      return { ...ficha, ...(c.cuadernos.find((x) => x.id === cid) || {}) };
+    };
+    // Guarda en la ficha del cuaderno (la del Cuaderno 1 de una receta se crea la primera vez)
+    const guardarInforme = (cambios) => {
+      cambiarCuaderno((d) => {
+        let x = d.cuadernos.find((y) => y.id === cid);
+        if (!x) { x = { id: cid, recetaId: (receta && receta.id) || null, nombre: ficha.nombre, fecha: 0 }; d.cuadernos.push(x); }
+        const nuevo = { ...(x.informe || {}), ...cambios };
+        for (const k of Object.keys(nuevo)) if (nuevo[k] === '' || nuevo[k] == null) delete nuevo[k];
+        x.informe = nuevo;
+      });
+    };
+    const inf0 = fichaDeAhora().informe || {};
+    const c0 = leerCuaderno();
+    const hayReceta = Boolean(receta && receta.id && recetaDe(receta.id));
+    const hayAnterior = K.gruposDe(c0, amb).some((g) => g.vieneDe);
+    const albumes = K.albumesDe(c0, amb);
+    const op = () => {
+      const i = fichaDeAhora().informe || {};
+      // (versión 149: las diferencias de los grupos finales, de entrada sí; la historia entera de cada grupo, solo si se pide)
+      return { conReceta: i.sinReceta !== true, conAnterior: i.sinAnterior !== true, conHistoria: i.sinHistoria === false, conVariaciones: i.sinVariaciones !== true,
+        // (las disoluciones, aparte desde la versión 147; desde la 148, solo si se pide: lo suyo ya está en su tabla)
+        conHistoriaDis: i.sinHistoriaDis === false, fotos: i.fotos || 'analisis', quitadas: i.quitadas || [] };
+    };
+    // Los cuadernos unidos a este por muestras que pasaron de uno a otro (versión 129): entran también
+    const relacionados = cuadernosRelacionados(c0, amb);
+    const partes = () => {
+      const c = leerCuaderno();
+      const fuera = (fichaDeAhora().informe || {}).sinCuadernos || [];
+      return [{ amb, ficha: fichaDeAhora(), receta }, ...cuadernosRelacionados(c, amb).filter((x) => !fuera.includes(x.parte.amb.cuadernoId)).map((x) => x.parte)];
+    };
+    // Lo que necesita un informe guardado para su «Qué incluir» (versión 142): sus cuadernos (los que tenía), y
+    // las mismas opciones y fotos que los nuevos
+    const contexto = {
+      op, hayReceta, hayAnterior, albumes,
+      partesDe: (ids) => {
+        const c = leerCuaderno();
+        const suyos = (ids || []).map((v) => v ?? null);
+        return [{ amb, ficha: fichaDeAhora(), receta }, ...cuadernosRelacionados(c, amb).filter((x) => !ids || suyos.includes(x.parte.amb.cuadernoId ?? null)).map((x) => x.parte)];
+      },
+    };
+    // Un informe nuevo: el estándar, con los datos de ahora, guardado (con los huecos para escribir lo que falta)
+    const nuevo = () => {
+      const c = leerCuaderno();
+      const ps = partes();
+      const hechos = K.informesDe(c, amb);
+      const n = Math.max(0, ...hechos.map((x) => Number((/^Informe (\d+)$/.exec(x.nombre) || [])[1]) || 0)) + 1;
+      const ahora = Date.now();
+      const x = { id: idDe('i'), recetaId: (receta && receta.id) || null, ...K.marcaDe(amb), nombre: `Informe ${n}`, fecha: ahora, mod: ahora,
+        cuadernos: ps.map((p) => p.amb.cuadernoId), incluir: { fotos: op().fotos }, bloques: paraGuardar(modeloInforme(c, ps, { ...op(), editando: true })) };
+      cambiarCuaderno((d) => { d.informes = [...(d.informes || []), x]; });
+      abrirInformeGuardado(x.id, pintar, contexto);
+    };
+    let relojTextos = null;
+    const estado = h('small', { class: 'notas-estado' });
+    const campos = TEXTOS_INFORME.map(([k, rotulo, pista, filas]) => {
+      const campo = h(filas ? 'textarea' : 'input', { class: 'campo', rows: filas || null, autocapitalize: 'sentences', placeholder: pista, value: inf0[k] || '',
+        oninput: () => {
+          estado.textContent = 'Guardando…';
+          clearTimeout(relojTextos);
+          relojTextos = setTimeout(() => {
+            guardarInforme(Object.fromEntries(campos.map((x) => [x.k, x.campo.value.trim()])));
+            estado.textContent = '✓ Guardado (para los informes nuevos)';
+          }, 700);
+        } });
+      return { k, campo, el: h('label', { class: 'etiqueta-campo' }, h('span', { text: rotulo }), campo) };
+    });
+    const casilla = (clave, texto) => h('label', { class: 'parte-opcion' },
+      h('input', { type: 'checkbox', checked: inf0[clave] !== true, onchange: (e) => guardarInforme({ [clave]: e.target.checked ? null : true }) }), ` ${texto}`);
+    const selFotos = h('select', { class: 'campo', onchange: (e) => guardarInforme({ fotos: e.target.value }) },
+      [['analisis', 'Las de los análisis (microscopio, medidas…)'], ['todas', 'Todas las fotos'], ...albumes.map((a) => [`album:${a.id}`, `Las del álbum «${a.nombre}»`]), ['ninguna', 'Ninguna']]
+        .map(([v, t]) => h('option', { value: v, text: t, selected: (inf0.fotos || 'analisis') === v })));
+    const fueraDe0 = inf0.sinCuadernos || [];
+    const relacionadosEl = relacionados.map((x) => h('label', { class: 'parte-opcion' },
+      h('input', { type: 'checkbox', checked: !fueraDe0.includes(x.parte.amb.cuadernoId), onchange: (e) => {
+        const l = new Set((fichaDeAhora().informe || {}).sinCuadernos || []);
+        if (e.target.checked) l.delete(x.parte.amb.cuadernoId); else l.add(x.parte.amb.cuadernoId);
+        guardarInforme({ sinCuadernos: l.size ? [...l] : null });
+      } }),
+      ` Incluir también «${x.parte.ficha.nombre}»${x.van ? ` (allí siguieron ${x.van} ${x.van === 1 ? 'grupo' : 'grupos'})` : x.vienen ? ` (de allí vienen ${x.vienen} ${x.vienen === 1 ? 'grupo' : 'grupos'})` : ''}`));
+    // Todos los datos en un texto, para una IA (versión 129): se descarga o se copia
+    const nombreIA = () => `${nombreArchivo(`Datos ${nombreDelTrabajo(fichaDeAhora(), receta)}`)}.txt`;
+    const bIA = h('button', { class: 'boton secundario', text: '📝 Datos en texto', onclick: async () => {
+      bIA.disabled = true;
+      try {
+        const texto = await textoParaIA(leerCuaderno(), partes());
+        const donde = await guardarBinario(new Blob([texto], { type: 'text/plain;charset=utf-8' }), nombreIA(), 'text/plain');
+        avisar(`✅ Guardado «${nombreIA()}» en ${donde} (${Math.round(texto.length / 1000)} mil letras)`);
+      } catch (e) {
+        if (!(e && e.name === 'AbortError')) avisar(`No se ha podido hacer el texto (${(e && e.message) || 'error'})`);
+      }
+      bIA.disabled = false;
+    } });
+    const bCopiarIA = h('button', { class: 'boton discreto', text: '📋 Copiar ese texto', onclick: async () => {
+      try {
+        const texto = await textoParaIA(leerCuaderno(), partes());
+        await navigator.clipboard.writeText(texto);
+        avisar(`📋 Copiado (${Math.round(texto.length / 1000)} mil letras): pégalo en la IA`);
+      } catch { avisar('No se ha podido copiar: descárgalo con el botón de al lado'); }
+    } });
+    const ajustes = h('div', {},
+      h('h3', { text: 'Para los informes nuevos' }),
+      h('details', { class: 'informe-editor' }, h('summary', { text: '✏️ Textos (título, autores, resumen, introducción, discusión…)' }), campos.map((x) => x.el), estado),
+      h('details', { class: 'informe-editor' }, h('summary', { text: '⚙️ Qué incluir' }),
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Fotos en «Caracterización»' }), selFotos),
+        relacionados.length > 0 && h('p', { class: 'etiqueta-campo', text: 'Cuadernos unidos a este (las muestras pasaron de uno a otro):' }), relacionadosEl,
+        hayReceta && casilla('sinReceta', 'El procedimiento (reactivos, cantidades y pasos)'),
+        casilla('sinVariaciones', 'Las diferencias de los grupos finales respecto al procedimiento'),
+        // (la historia entera de cada grupo, quitada de entrada desde la versión 149)
+        h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: inf0.sinHistoria === false,
+          onchange: (e) => guardarInforme({ sinHistoria: !e.target.checked }) }), ' Anexo: la historia completa de cada grupo'),
+        // (las disoluciones, aparte desde la versión 147; desde la 148, quitada de entrada)
+        h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: inf0.sinHistoriaDis === false,
+          onchange: (e) => guardarInforme({ sinHistoriaDis: !e.target.checked }) }), ' Anexo: la historia de cada disolución'),
+        hayAnterior && casilla('sinAnterior', 'Anexo: la historia de las muestras en otros cuadernos')),
+      h('h3', { text: 'Todos los datos, para una IA' }),
+      h('div', { class: 'informe-botones' }, bIA, bCopiarIA));
+    const lista = h('div');
+    const pintar = () => {
+      const hechos = K.informesDe(leerCuaderno(), amb);
+      const ultimo = hechos[0];
+      poner(lista,
+        h('button', { class: 'boton grande', text: '＋ Informe nuevo (con los datos de ahora)', onclick: nuevo }),
+        ultimo && h('button', { class: 'boton secundario grande', onclick: () => abrirInformeGuardado(ultimo.id, pintar, contexto) },
+          h('span', { text: `✏️ Seguir con «${ultimo.nombre}»` }), h('small', { class: 'nota', text: ` · cambiado el ${fechaHoraNum(ultimo.mod || ultimo.fecha)}` })),
+        hechos.length > 0 && h('button', { class: 'boton secundario grande', text: `📁 Carpeta: ${hechos.length} ${hechos.length === 1 ? 'informe guardado' : 'informes guardados'}`, onclick: () => abrirCarpetaInformes(amb, pintar, contexto) }));
+    };
+    poner(cuerpo,
+      h('p', { class: 'nota', text: 'El informe nuevo sale solo con los datos del cuaderno y se guarda aquí. Luego lo editas a tu gusto (mover, quitar, escribir): quitar algo del informe no lo quita de la bitácora; y si corriges una frase que viene de la bitácora, te ofrece corregirla también allí.' }),
+      lista, ajustes);
+    pintar();
+  };
+
+  // La carpeta: los informes guardados de un cuaderno, el último cambiado primero
+  const abrirCarpetaInformes = (amb, alVolver, contexto) => {
+    const { cuerpo } = abrirPanel('📁 Informes guardados', null, alVolver);
+    const pintar = () => {
+      const hechos = K.informesDe(leerCuaderno(), amb);
+      poner(cuerpo, hechos.length ? hechos.map((x) => h('div', { class: 'tarjeta informe-guardado' },
+        h('button', { class: 'informe-guardado-abrir', onclick: () => abrirInformeGuardado(x.id, pintar, contexto) },
+          h('b', { text: `📄 ${x.nombre}` }), h('small', { class: 'nota', text: `Hecho el ${fechaHoraNum(x.fecha)} · cambiado el ${fechaHoraNum(x.mod || x.fecha)}` })),
+        h('div', { class: 'chips' },
+          h('button', { class: 'chip', text: '✏️ Nombre', onclick: async () => {
+            const v = await preguntar({ texto: 'Nombre del informe', campo: { value: x.nombre, autocapitalize: 'sentences' }, si: 'Guardar', no: 'Cancelar' });
+            if (v === null || !v.trim()) return;
+            cambiarCuaderno((d) => { const y = (d.informes || []).find((z) => z.id === x.id); if (y) { y.nombre = v.trim().slice(0, 80); y.mod = Date.now(); } });
+            pintar();
+          } }),
+          h('button', { class: 'chip', text: '📑 Duplicar', onclick: () => {
+            cambiarCuaderno((d) => { const y = (d.informes || []).find((z) => z.id === x.id); if (y) d.informes.push({ ...JSON.parse(JSON.stringify(y)), id: idDe('i'), nombre: `${y.nombre} (copia)`, fecha: Date.now(), mod: Date.now() }); });
+            pintar();
+          } }),
+          h('button', { class: 'chip', text: '🗑️ Borrar', onclick: async () => {
+            if (!await preguntar({ texto: `¿Borrar «${x.nombre}»?`, detalle: 'Solo se borra este informe: la bitácora, las fotos y los demás informes se quedan.', si: 'Borrar', peligro: true })) return;
+            cambiarCuaderno((d) => { d.informes = (d.informes || []).filter((z) => z.id !== x.id); });
+            pintar();
+          } }))))
+        : h('p', { class: 'nota', text: 'Aún no hay informes guardados.' }));
+    };
+    pintar();
+  };
+
+  // ── Un informe guardado: verlo, sacarlo en PDF o Word y editarlo a gusto ──
+  // Versión 137 (el usuario aprobó el plan: «dale»): se escribe directamente en la hoja, como en Word (antes,
+  // cada cosa en un cuadro aparte); una barra de herramientas para lo elegido (arriba en el PC, abajo en el
+  // móvil); la hoja limpia (solo se resalta lo que se toca); deshacer y rehacer (↶ ↷, Ctrl+Z / Ctrl+Y);
+  // añadir párrafos, títulos, listas, saltos de página y figuras con fotos del cuaderno; en el PC, un
+  // índice a la izquierda (para saltar y, editando, mover secciones enteras arrastrando); y la cabecera
+  // compacta (tocar el nombre lo cambia). Lo de antes sigue: corregir también en la bitácora (ahora sale
+  // un aviso con «Solo en el informe» para no hacerlo), quitar nunca toca la bitácora, arrastrar fotos
+  // ctx (de abrirInforme): cómo se hacen sus partes con los datos de ahora, para «Qué incluir» (versión 142)
+  const abrirInformeGuardado = (id, alVolver, ctx) => {
+    const leerX = () => (leerCuaderno().informes || []).find((y) => y.id === id) || null;
+    let x = leerX();
+    if (!x) return;
+    const amb = K.ambito(x.recetaId, x.cuadernoId);
+    let editando = false;
+    let actual = null;
+    let sel = null; // lo elegido: { i, ref }
+    // (al quitar o partir un bloque, el texto donde está el cursor cambia de número: ajuste lo corrige)
+    let ajuste = null;
+    const pilaAtras = [];
+    const pilaAdelante = [];
+    const sinFoco = (e) => e.preventDefault(); // (los botones no le quitan el cursor al texto que se escribe)
+    const bDeshacer = h('button', { class: 'icono', type: 'button', 'aria-label': 'Deshacer', title: 'Deshacer (Ctrl+Z)', text: '↶', onmousedown: sinFoco, onclick: () => deshacer() });
+    const bRehacer = h('button', { class: 'icono', type: 'button', 'aria-label': 'Rehacer', title: 'Rehacer (Ctrl+Y)', text: '↷', onmousedown: sinFoco, onclick: () => rehacer() });
+    const bEditar = h('button', { class: 'boton-cabecera', type: 'button', onmousedown: sinFoco, onclick: () => { guardarLoEscrito(); editando = !editando; sel = null; pintar(); } });
+    const bPdf = h('button', { class: 'boton-cabecera secundario solo-pc', type: 'button', text: '🖨️ PDF', onmousedown: sinFoco, onclick: () => pdf() });
+    const bWord = h('button', { class: 'boton-cabecera secundario solo-pc', type: 'button', text: '📄 Word', onmousedown: sinFoco, onclick: () => word() });
+    const bMas = h('button', { class: 'icono', type: 'button', 'aria-label': 'Más opciones del informe', title: 'Más', text: '⋯', onmousedown: sinFoco, onclick: () => mas() });
+    // Ctrl+Z / Ctrl+Y (fuera de un texto: dentro, deshace lo escrito, como siempre)
+    const teclas = (e) => {
+      if (!editando || !capas.length || capas[capas.length - 1].el !== panel) return;
+      // (Alt+↑ / Alt+↓: subir o bajar lo elegido, también mientras se escribe en ello)
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && sel && x.bloques[sel.i] && x.bloques[sel.i].t !== 'portada') {
+        e.preventDefault();
+        guardarLoEscrito();
+        soltarFoco();
+        mover(sel.i, e.key === 'ArrowUp' ? -1 : 1);
+        return;
+      }
+      // (Ctrl+H: buscar y reemplazar, también escribiendo)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); buscarYReemplazar(); return; }
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains('escribible')) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); deshacer(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); rehacer(); }
+    };
+    document.addEventListener('keydown', teclas);
+    // (lo que se está escribiendo se guarda también al salir de la app o del informe sin tocar fuera del texto)
+    const alOcultar = () => { if (document.visibilityState === 'hidden') guardarLoEscrito(); };
+    document.addEventListener('visibilitychange', alOcultar);
+    const { cuerpo, titulo, panel, capa } = abrirPanel(`📄 ${x.nombre}`, [bDeshacer, bRehacer, bEditar, bPdf, bWord, bMas], () => {
+      document.removeEventListener('keydown', teclas);
+      document.removeEventListener('visibilitychange', alOcultar);
+      cuerpo.removeEventListener('scroll', alDesplazar);
       const zona = document.getElementById('impresion');
       if (zona) zona.replaceChildren();
       document.body.classList.remove('imprimiendo');
+      if (alVolver) alVolver();
     });
-    let conFotos = true;
-    let conAnterior = true;
-    let conReceta = true;
-    let actual = null;
+    capa.retener = () => { guardarLoEscrito(); return false; };
+    panel.classList.add('panel-informe');
+    titulo.classList.add('titulo-cambiable');
+    titulo.title = 'Cambiar el nombre';
+    titulo.addEventListener('click', () => renombrar());
     const hoja = h('div', { class: 'informe-hoja' });
-    const hayReceta = Boolean(receta && receta.id && recetaDe(receta.id));
-    const hayAnterior = K.gruposDe(leerCuaderno(), amb).some((g) => g.vieneDe);
-    const boton = h('button', { class: 'boton', text: '🖨️ Guardar como PDF o imprimir', onclick: async () => {
-      if (!actual) return;
-      boton.disabled = true;
-      await actual.listo;
-      boton.disabled = false;
-      imprimirInforme(actual.el, `Informe ${ficha.nombre}`);
-    } });
-    const pintar = () => {
-      actual = informeDe(leerCuaderno(), receta, amb, ficha, { conFotos, conAnterior, conReceta });
-      poner(hoja, actual.el);
+    const indice = h('nav', { class: 'informe-indice', 'aria-label': 'Índice del informe' });
+    const barra = h('div', { class: 'editor-barra', hidden: true });
+    // Cambia el informe guardado (fn recibe sus bloques) y lo vuelve a dibujar donde se estaba; antes,
+    // apunta cómo estaba para poder deshacerlo. fuera: lo que ese cambio corrigió también en la bitácora
+    // ([{ escribir, viejo, nuevo }]): deshacer lo deja allí como estaba, y rehacer lo vuelve a corregir
+    // (versión 139; antes, deshacer solo deshacía el informe)
+    const cambiarX = (fn, { sinPila = false, fuera = [] } = {}) => {
+      let paso = null;
+      cambiarCuaderno((d) => {
+        const y = (d.informes || []).find((z) => z.id === id);
+        if (!y) return;
+        // (con las correcciones propuestas a la bitácora: deshacer también las quita; versión 143)
+        if (!sinPila) { paso = { bloques: JSON.stringify(y.bloques), propuestas: JSON.stringify(y.propuestas || []), fuera }; pilaAtras.push(paso); if (pilaAtras.length > 80) pilaAtras.shift(); pilaAdelante.length = 0; }
+        fn(y.bloques, y);
+        y.mod = Date.now();
+      });
+      apuntarGuardado();
+      pintar();
+      return paso;
     };
-    poner(cuerpo,
-      h('p', { class: 'nota', text: 'Toda la historia del cuaderno, ordenada. Con «Guardar como PDF» eliges «Guardar como PDF» (o una impresora) en el cuadro que sale.' }),
-      h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conFotos = e.target.checked; pintar(); } }), ' Con las fotos'),
-      hayReceta && h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conReceta = e.target.checked; pintar(); } }), ' Con la receta copiada'),
-      hayAnterior && h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { conAnterior = e.target.checked; pintar(); } }), ' Con la historia de antes (de otros cuadernos)'),
-      boton,
-      hoja);
+    const volverA = (desde, hacia, atrasDel) => {
+      if (!desde.length) return;
+      const paso = desde.pop();
+      cambiarCuaderno((d) => { const y = (d.informes || []).find((z) => z.id === id); if (!y) return; hacia.push({ bloques: JSON.stringify(y.bloques), propuestas: JSON.stringify(y.propuestas || []), fuera: paso.fuera }); y.bloques = JSON.parse(paso.bloques); if (paso.propuestas) { const l = JSON.parse(paso.propuestas); if (l.length) y.propuestas = l; else delete y.propuestas; } y.mod = Date.now(); });
+      for (const f of paso.fuera) f.escribir(atrasDel ? f.viejo : f.nuevo);
+      if (paso.fuera.length) avisar(atrasDel ? '↶ Deshecho también en la bitácora' : '↷ Corregido otra vez también en la bitácora');
+      sel = null;
+      apuntarGuardado();
+      pintar();
+    };
+    const deshacer = () => { guardarLoEscrito(); volverA(pilaAtras, pilaAdelante, true); };
+    const rehacer = () => volverA(pilaAdelante, pilaAtras, false);
+    // «✓ Guardado» en la barra (estaba en el plan de la versión 137 y faltaba): cada cambio se guarda solo
+    const estadoGuardado = h('span', { class: 'barra-estado', 'aria-live': 'polite' });
+    const apuntarGuardado = () => { estadoGuardado.textContent = `✓ Guardado ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`; };
+
+    // ── Dónde está el cursor (para dejarlo en su sitio al volver a dibujar) ──
+    const claveRef = (r) => [r.i, r.campo, r.fila ?? '', r.col ?? '', r.item ?? ''].join('|');
+    const refDeClave = (k) => {
+      const [i, campo, fila, col, item] = k.split('|');
+      const n = (v) => (v === '' ? undefined : Number(v));
+      return { i: Number(i), campo, fila: n(fila), col: n(col), item: n(item) };
+    };
+    const posCursor = (el) => {
+      const s = window.getSelection();
+      if (!s || !s.rangeCount) return null;
+      const r = s.getRangeAt(0);
+      if (!el.contains(r.endContainer)) return null;
+      const antes = document.createRange();
+      antes.selectNodeContents(el);
+      antes.setEnd(r.endContainer, r.endOffset);
+      return antes.toString().length;
+    };
+    const ponerCursor = (el, pos) => {
+      const s = window.getSelection();
+      const r = document.createRange();
+      let quedan = pos == null ? Infinity : pos;
+      const recorrido = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let nodo = recorrido.nextNode(); nodo; nodo = recorrido.nextNode()) {
+        if (quedan <= nodo.length) { r.setStart(nodo, quedan); r.collapse(true); s.removeAllRanges(); s.addRange(r); return; }
+        quedan -= nodo.length;
+      }
+      r.selectNodeContents(el);
+      r.collapse(false);
+      s.removeAllRanges();
+      s.addRange(r);
+    };
+    const leerEl = (el) => el.innerText.replace(/ /g, ' ').replace(/[ \t]+\n/g, '\n').trim();
+
+    const pintar = () => {
+      x = leerX();
+      if (!x) return;
+      titulo.textContent = `📄 ${x.nombre}`;
+      const a = document.activeElement;
+      const foco = a && a.dataset && a.dataset.ref && hoja.contains(a) ? { ref: a.dataset.ref, pos: posCursor(a) } : null;
+      if (foco && ajuste) {
+        const r = refDeClave(foco.ref);
+        if (ajuste.item !== undefined) { if (r.i === ajuste.desde && r.item > ajuste.item) r.item--; }
+        else if (r.i > ajuste.desde) r.i += ajuste.n;
+        foco.ref = claveRef(r);
+        if (sel && ajuste.item === undefined && sel.i > ajuste.desde) sel = { ...sel, i: sel.i + ajuste.n };
+      }
+      ajuste = null;
+      const arriba = cuerpo.scrollTop;
+      actual = informeHtml(x.bloques, { edicion: editando ? edicion : null });
+      // (los textos que se van a sustituir ya no se guardan al perder el cursor: si no, lo de uno se podía
+      // guardar en el que ocupa ahora su sitio —al quitar una fila, en la de debajo—; versión 142)
+      for (const el of hoja.querySelectorAll('.escribible')) el.dataset.hecho = '1';
+      poner(hoja, actual.el);
+      cuerpo.scrollTop = arriba;
+      if (foco) {
+        const el = hoja.querySelector(`[data-ref="${foco.ref}"]`);
+        if (el) { el.focus({ preventScroll: true }); ponerCursor(el, foco.pos); }
+      }
+      marcarElegido();
+      pintarBarra();
+      pintarIndice();
+      bEditar.textContent = editando ? '✓ Listo' : '✏️ Editar';
+      bEditar.setAttribute('aria-label', editando ? 'Terminar de editar' : 'Editar este informe');
+      bDeshacer.hidden = !editando;
+      bRehacer.hidden = !editando;
+      bDeshacer.disabled = !pilaAtras.length;
+      bRehacer.disabled = !pilaAdelante.length;
+      panel.classList.toggle('editando-informe', editando);
+    };
+
+    // ── Leer y escribir cada trozo de texto de un bloque (ref.campo) ──
+    const leerCampo = (b, r) => {
+      switch (r.campo) {
+        case 'item': return b.items[r.item];
+        case 'celda': return (b.filas[r.fila] || [])[r.col];
+        case 'cab': return b.cab[r.col];
+        case 'detalles': return b.detalles.join(' · ');
+        case 'obs': return b.observaciones;
+        case 'panel': return (b.paneles[r.item] || {}).texto;
+        default: return b[r.campo];
+      }
+    };
+    const escribirCampo = (z, r, v, B) => {
+      const k = B.indexOf(z);
+      switch (r.campo) {
+        case 'texto':
+          if (!v && ['p', 'h1', 'h2', 'paso'].includes(z.t)) { B.splice(k, 1); return; }
+          // (un párrafo con saltos de línea son varios párrafos, como al pulsar Intro en Word)
+          if (z.t === 'p' && v.includes('\n')) { const partes = v.split(/\n+/).map((s) => s.trim()).filter(Boolean); B.splice(k, 1, ...partes.map((t) => ({ ...z, texto: t }))); return; }
+          z.texto = v;
+          return;
+        case 'item':
+          if (!v) { z.items.splice(r.item, 1); if (z.editarItems) z.editarItems.splice(r.item, 1); if (!z.items.length) B.splice(k, 1); } else z.items[r.item] = v;
+          return;
+        case 'celda': z.filas[r.fila][r.col] = v; return;
+        case 'cab': z.cab[r.col] = v; return;
+        case 'detalles': z.detalles = v.split(' · ').map((s) => s.trim()).filter(Boolean); return;
+        case 'desc': z.desc = v && !/[.!?]$/.test(v) ? `${v}.` : v; return;
+        case 'pie': if (v) z.pie = v; else delete z.pie; return;
+        case 'obs': z.observaciones = v; return;
+        case 'panel': if (z.paneles[r.item]) z.paneles[r.item].texto = v; return;
+        // (el punto lo pone el pie)
+        case 'cabeza': z.cabeza = v.replace(/\.+$/, ''); return;
+        default: z[r.campo] = v;
+      }
+    };
+    // De dónde sale (en la bitácora, la receta…) lo escrito en un trozo: para corregirlo también allí
+    const enlacesDe = (b, r) => {
+      switch (r.campo) {
+        case 'texto': return b.editar && b.editar.tipo !== 'abrirReceta' ? [b.editar] : [];
+        case 'item': return [(b.editarItems && b.editarItems[r.item]) || b.editar].filter(Boolean);
+        case 'celda': return [b.editarFilas && b.editarFilas[r.fila]].filter(Boolean);
+        case 'obs': return b.entradaId ? [{ tipo: 'apuntes', ids: [b.entradaId] }] : [];
+        case 'pie': return [{ tipo: 'fotosPie', entradaId: b.entradaId, fotos: b.paneles.map((p) => p.id) }];
+        case 'titulo': case 'autores': case 'institucion': return b.t === 'portada' ? [{ tipo: 'texto', clave: r.campo }] : [];
+        default: return [];
+      }
+    };
+    // Las marcas de las citas («⟦T:t3⟧») se vuelven a poner donde sigue su texto («Tabla 3»)
+    const devolverMarcas = (crudo, nuevo, citas) => {
+      let r = nuevo;
+      for (const m of crudo.match(/⟦[^⟧]*⟧/g) || []) {
+        const visto = citas(m);
+        const k = r.indexOf(visto);
+        if (k >= 0) r = `${r.slice(0, k)}${m}${r.slice(k + visto.length)}`;
+      }
+      return r;
+    };
+    const cambiarEnBloques = (B, cambios) => {
+      for (const ch of cambios) {
+        const viejas = formasDe(ch.fuente.valor);
+        const nuevas = formasDe(ch.nuevoRaw);
+        viejas.forEach((v, k) => reemplazarEnBloques(B, v, nuevas[Math.min(k, nuevas.length - 1)] || ''));
+      }
+    };
+    const conAjuste = (ref, fn) => (B, y) => {
+      const n0 = B.length;
+      const items0 = B[ref.i] && B[ref.i].items ? B[ref.i].items.length : 0;
+      fn(B, y);
+      if (B.length !== n0) ajuste = { desde: ref.i, n: B.length - n0 };
+      else if (ref.campo === 'item' && B[ref.i] && B[ref.i].items.length < items0) ajuste = { desde: ref.i, item: ref.item };
+    };
+    // Guardar lo escrito en un trozo (al salir de él). Si lo cambiado es una frase de la bitácora, se corrige
+    // también allí, con un aviso que deja no hacerlo («Solo en el informe»)
+    // siFuera: la casilla «Corregir también en la bitácora» de la barra, tal como estaba al salir del texto
+    const guardarTexto = (ref, nuevo, siFuera = false) => {
+      x = leerX();
+      if (!x) return;
+      const b = x.bloques[ref.i];
+      if (!b) return;
+      const citas = numerar(x.bloques).citas;
+      const crudo = leerCampo(b, ref) || '';
+      const mostrado = citas(crudo);
+      if (nuevo === mostrado) {
+        // (un párrafo, un título o una línea nuevos que se dejan vacíos, fuera)
+        if (!nuevo && (['p', 'h1', 'h2'].includes(b.t) && ref.campo === 'texto' || ref.campo === 'item')) cambiarX(conAjuste(ref, (B) => escribirCampo(B[ref.i], ref, '', B)), { sinPila: true });
+        return;
+      }
+      const conMarcas = citasVivas(devolverMarcas(crudo, nuevo, citas), x.bloques);
+      const c = leerCuaderno();
+      // De dónde viene lo cambiado: un texto de la bitácora (fuente) o una corrección ya propuesta y aún sin
+      // aceptar (si se vuelve a corregir, se corrige la propuesta)
+      const fuentes = enlacesDe(b, ref).flatMap((o) => fuentesDe(c, o, { amb }).map((f) => ({ ...f, enlace: o })));
+      const pendientes = (x.propuestas || []).map((p) => ({ etiqueta: p.etiqueta, valor: p.nuevo, propuesta: p }));
+      const ch = detectarCambio(mostrado, nuevo, [...pendientes, ...fuentes])[0];
+      const cambios = ch && siFuera && !ch.fuente.propuesta ? [ch] : [];
+      // (observaciones donde no había: pasan a ser la nota de su apunte, si no tenía)
+      const e = ref.campo === 'obs' && !mostrado && nuevo && b.entradaId && c.entradas.find((y) => y.id === b.entradaId);
+      const notaNueva = e && !e.nota ? e.id : null;
+      const fuera = cambios.map((ch) => ({ escribir: ch.fuente.escribir, viejo: ch.fuente.valor, nuevo: ch.nuevoRaw }));
+      if (notaNueva && siFuera) fuera.push({ escribir: (v) => cambiarCuaderno((d) => { const y = d.entradas.find((z) => z.id === notaNueva); if (!y) return; if (v) y.nota = v; else delete y.nota; }), viejo: '', nuevo });
+      for (const f of fuera) f.escribir(f.nuevo);
+      // Sin la casilla: queda propuesto para aceptarlo luego en la bitácora (versión 143)
+      // (los textos para los informes nuevos no son de la bitácora: esos no se proponen; y cambiar la redacción del
+      // pie de una figura —«Microscopio electrónico» → «microscopía electrónica»— no es cambiar el nombre de la
+      // técnica ni del grupo en la bitácora: se vio al rellenar un informe para entregar; versión 144)
+      const deUnPie = ch && ch.fuente.enlace && ch.fuente.enlace.tipo === 'fotosPie' && /técnica|nombre del grupo/.test(ch.fuente.etiqueta);
+      const propuesta = !siFuera && (ch && !ch.fuente.propuesta && ch.fuente.enlace.tipo !== 'texto' && !deUnPie ? { enlace: ch.fuente.enlace, etiqueta: ch.fuente.etiqueta, viejo: ch.fuente.valor, nuevo: ch.nuevoRaw }
+        : notaNueva ? { nota: notaNueva, enlace: { tipo: 'apuntes', ids: [notaNueva] }, etiqueta: 'en la bitácora (como nota del apunte)', viejo: '', nuevo } : null);
+      const corregida = ch && ch.fuente.propuesta ? { id: ch.fuente.propuesta.id, nuevo: ch.nuevoRaw } : null;
+      const paso = cambiarX(conAjuste(ref, (B, y) => {
+        const z = B[ref.i];
+        cambiarEnBloques(B, cambios);
+        escribirCampo(z, ref, conMarcas, B);
+        if (propuesta) y.propuestas = [...(y.propuestas || []), { id: idDe('pr'), fecha: Date.now(), ...propuesta }];
+        if (corregida) {
+          // (vuelta a como estaba en la bitácora: ya no hay nada que proponer)
+          y.propuestas = (y.propuestas || []).map((p) => (p.id === corregida.id ? { ...p, nuevo: corregida.nuevo, fecha: Date.now() } : p)).filter((p) => p.nuevo !== p.viejo);
+          if (!y.propuestas.length) delete y.propuestas;
+        }
+      }), { fuera });
+      if (corregida && siFuera) {
+        const p = (leerX().propuestas || []).find((q) => q.id === corregida.id);
+        if (p && aceptarPropuesta(leerX(), p) === 'ok') avisar(`✅ Corregido también ${p.etiqueta}`);
+      }
+      if (propuesta) {
+        avisar('📝 Guardado en el informe. En la bitácora queda para que lo aceptes («Correcciones del informe»)', { texto: 'Aceptarlo ya', hacer: () => {
+          const y = leerX();
+          const p = y && (y.propuestas || [])[(y.propuestas || []).length - 1];
+          avisar(p && aceptarPropuesta(y, p) === 'ok' ? `✅ Corregido también ${p.etiqueta}` : 'No se ha podido: en la bitácora ese texto ya ha cambiado');
+        } });
+      }
+      if (fuera.length) {
+        avisar(`✅ Corregido también ${cambios.length ? cambios[0].fuente.etiqueta : 'en la bitácora (la nota del apunte)'}`, { texto: 'Solo en el informe', hacer: () => {
+          for (const f of fuera) f.escribir(f.viejo);
+          // (y deshacer o rehacer ya no la tocan)
+          if (paso) paso.fuera = [];
+          avisar('Vale: en la bitácora se queda como estaba');
+        } });
+      }
+    };
+    // Las citas que se escriben a mano («como se ve en la Figura 3», «la Tabla 2», «Figuras 2 a 4») pasan a
+    // ser citas vivas (⟦F:id⟧…): si luego se mueve o se quita una figura, el número se cambia solo
+    // (versión 139). Solo con mayúscula y si existe esa tabla o figura
+    const citasVivas = (texto, B) => {
+      const N = numerar(B);
+      const por = { Tabla: new Map(), Figura: new Map() };
+      for (const b of N) if (b.id && (b.t === 'tabla' || b.t === 'arbol' || b.t === 'fotos')) { const [tipo, n] = b.n.split(' '); por[tipo].set(n, b.id); }
+      return String(texto).split(/(⟦[^⟧]*⟧)/).map((trozo, k) => (k % 2 ? trozo : trozo
+        .replace(/\bFiguras (\d+) a (\d+)\b/g, (todo, a, z) => (por.Figura.has(a) && por.Figura.has(z) ? `⟦FS:${por.Figura.get(a)}:${por.Figura.get(z)}⟧` : todo))
+        .replace(/\b(Tabla|Figura) (\d+)\b/g, (todo, tipo, n) => (por[tipo].has(n) ? `⟦${tipo === 'Tabla' ? 'T' : 'F'}:${por[tipo].get(n)}⟧` : todo)))).join('');
+    };
+    // Lo que se está escribiendo, guardado ya (antes de una herramienta, de deshacer, de terminar…)
+    const guardarLoEscrito = () => {
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains('escribible') && hoja.contains(a)) guardarTexto(refDeClave(a.dataset.ref), leerEl(a), siFueraDe(a.dataset.ref));
+    };
+    // La casilla «☑ Corregir también en la bitácora» (versión 140; lo pidió el usuario: «que me salga una casilla
+    // para marcar si se cambia o no»). Desde la versión 142, QUITADA de entrada (lo pidió: «mejor al revés, que
+    // esté desactivado de normal y haya que activarlo»): una por texto, quitada cada vez que se entra
+    let fueraSi = { clave: null, si: false };
+    const siFueraDe = (clave) => (fueraSi.clave === clave ? fueraSi.si : false);
+    // De dónde viene un texto del informe (para decirlo antes de escribir): la etiqueta de su sitio en la
+    // bitácora, la receta, las notas… o null si solo está en el informe
+    const deDondeViene = (ref) => {
+      const b = x.bloques[ref.i];
+      if (!b || !ref.campo) return null;
+      const mostrado = numerar(x.bloques).citas(leerCampo(b, ref) || '');
+      const c = leerCuaderno();
+      const f = enlacesDe(b, ref).flatMap((o) => fuentesDe(c, o, { amb })).find((y) => formasDe(y.valor).some((v) => mostrado.includes(v)))
+        // (o una corrección ya propuesta a la bitácora y aún sin aceptar)
+        || (x.propuestas || []).find((p) => p.nuevo && formasDe(p.nuevo).some((v) => mostrado.includes(v)));
+      if (f) return f.etiqueta;
+      if (ref.campo === 'obs' && !mostrado && b.entradaId) {
+        const e = c.entradas.find((y) => y.id === b.entradaId);
+        if (e && !e.nota) return 'en la bitácora (como nota del apunte)';
+      }
+      return null;
+    };
+    const casillaFuera = (ref) => {
+      const clave = claveRef(ref);
+      const etiqueta = deDondeViene(ref);
+      if (!etiqueta) return h('span', { class: 'barra-solo', text: 'Solo en este informe', title: 'Lo que escribas aquí no cambia la bitácora' });
+      const b = h('button', { type: 'button', role: 'checkbox', class: 'herramienta casilla-fuera', title: 'Marcada: se corrige ya también allí. Sin marcar: queda en la bitácora, en «Correcciones del informe», para aceptarlo luego',
+        onmousedown: sinFoco,
+        onclick: () => { fueraSi = { clave, si: !siFueraDe(clave) }; pintarCasilla(); } });
+      const pintarCasilla = () => {
+        const si = siFueraDe(clave);
+        b.setAttribute('aria-checked', String(si));
+        b.textContent = `${si ? '☑' : '☐'} Corregir también ${etiqueta}`;
+      };
+      pintarCasilla();
+      return b;
+    };
+
+    // ── Lo que pone el editor en la hoja (informeHtml) ──
+    const edicion = {
+      texto: (el, ref, valor, op) => {
+        el.textContent = valor;
+        el.classList.add('escribible');
+        el.dataset.ref = claveRef(ref);
+        if (op.pista) el.dataset.pista = op.pista;
+        el.contentEditable = 'plaintext-only';
+        if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
+        el.spellcheck = true;
+        el.addEventListener('focus', () => { if (fueraSi.clave !== el.dataset.ref) fueraSi = { clave: el.dataset.ref, si: false }; elegirBloque(ref.i, ref); });
+        el.addEventListener('keydown', (e) => {
+          // (Esc deja el texto como estaba; Intro, en una línea, termina)
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); el.textContent = valor; el.blur(); }
+          // (en una lista, Intro hace otra línea debajo, como en Word; en una línea vacía, termina)
+          else if (e.key === 'Enter' && ref.campo === 'item' && !e.ctrlKey && !e.metaKey && !e.shiftKey && leerEl(el)) { e.preventDefault(); otraLinea(el, ref); }
+          else if (e.key === 'Enter' && (op.linea || e.ctrlKey || e.metaKey)) { e.preventDefault(); el.blur(); }
+        });
+        el.addEventListener('paste', (e) => {
+          if (el.contentEditable !== 'true') return;
+          e.preventDefault();
+          document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
+        });
+        // (se guarda al salir: un momento después, para que el cursor ya esté donde se ha tocado)
+        el.addEventListener('blur', () => {
+          if (el.dataset.hecho) return;
+          const v = leerEl(el);
+          const si = siFueraDe(el.dataset.ref);
+          if (fueraSi.clave === el.dataset.ref) fueraSi = { clave: null, si: false };
+          setTimeout(() => guardarTexto(ref, v, si), 0);
+        });
+        return el;
+      },
+      bloque: (el, i) => {
+        el.dataset.i = String(i);
+        el.addEventListener('click', (e) => { if (!e.target.closest('.escribible, .informe-panel')) elegirBloque(i); });
+        return el;
+      },
+      hueco: (el, i) => { el.dataset.i = String(i); el.addEventListener('click', () => { elegirBloque(i); escribirHueco(i); }); return el; },
+      // (tocar la imagen: su cuadro; tocar el texto de debajo: escribir en él)
+      panel: (el, i, pi) => { el.addEventListener('click', (e) => { if (e.target.closest('.escribible')) return; elegirBloque(i, { panel: pi }); editarPanel(i, pi); }); return el; },
+      reordenar: (listas) => reordenarFotos(listas),
+    };
+    const otraLinea = (el, ref) => {
+      el.dataset.hecho = '1';
+      guardarTexto(ref, leerEl(el), siFueraDe(el.dataset.ref));
+      cambiarX((B) => { const z = B[ref.i]; if (!z || !z.items) return; z.items.splice(ref.item + 1, 0, ''); if (z.editarItems) z.editarItems.splice(ref.item + 1, 0, null); });
+      const n = hoja.querySelector(`[data-ref="${claveRef({ ...ref, item: ref.item + 1 })}"]`);
+      if (n) n.focus();
+    };
+    const elegirBloque = (i, ref = null) => { sel = { i, ref }; marcarElegido(); pintarBarra(); };
+    const marcarElegido = () => {
+      for (const el of hoja.querySelectorAll('.seleccionado')) el.classList.remove('seleccionado');
+      if (sel) { const el = hoja.querySelector(`[data-i="${sel.i}"]`); if (el) el.classList.add('seleccionado'); }
+    };
+
+    // ── La barra de herramientas: lo que se puede hacer con lo elegido ──
+    const herr = (texto, hacer, op = {}) => h('button', { type: 'button', class: `herramienta${op.peligro ? ' peligro' : ''}`, text: texto, title: op.titulo || null, 'aria-label': op.titulo || null,
+      // (op.descartar: lo que se quita —una fila, una línea, un bloque— no guarda antes lo que se escribía en ello)
+      onmousedown: sinFoco, onclick: async () => { if (!op.descartar) guardarLoEscrito(); soltarFoco(); await hacer(); } });
+    // Sale del texto en el que se escribe sin volver a guardarlo (ya se guardó): así lo que viene después
+    // (quitar una fila, mover un bloque…) no se lleva el cursor a otro sitio ni guarda allí lo de este
+    const soltarFoco = () => {
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains('escribible') && hoja.contains(a)) { a.dataset.hecho = '1'; a.blur(); }
+    };
+    const nombreDe = (b, n) => ({ portada: 'Portada', h1: 'Título', h2: 'Subtítulo', p: 'Párrafo', paso: `Paso ${n.n}`, lista: 'Lista', tabla: n.n, arbol: n.n, fotos: n.n, salto: 'Salto de página', hueco: 'Por escribir' })[b.t] || 'Bloque';
+    const pintarBarra = () => {
+      barra.hidden = !editando;
+      if (!editando) return;
+      const b = sel && x.bloques[sel.i];
+      if (!b) {
+        poner(barra, h('div', { class: 'barra-fila' }, h('span', { class: 'barra-pista', text: 'Toca un texto para escribir en él · mantén pulsada una foto para moverla' }),
+          herr('＋ Añadir al final', () => anadirMenu(x.bloques.length - 1)), herr('🔎 Buscar y reemplazar', buscarYReemplazar), herr('🏷️ Nombres de los grupos', nombresGrupos), ctx && herr('⚙️ Qué incluir', queIncluir), estadoGuardado));
+        return;
+      }
+      const n = numerar(x.bloques)[sel.i];
+      const r = sel.ref || {};
+      // (la foto elegida: tocando la imagen o el texto de debajo)
+      const pPanel = r.panel !== undefined ? r.panel : r.campo === 'panel' ? r.item : undefined;
+      // (de dónde sale lo elegido: un apunte de la bitácora o algo de la receta)
+      const enlace = (r.item !== undefined && ((b.editarItems && b.editarItems[r.item]) || b.editar))
+        || (r.fila !== undefined && b.editarFilas && b.editarFilas[r.fila]) || (b.t === 'paso' && b.editar) || null;
+      // (la casilla va aparte: en el móvil, en su propia línea encima de los botones; en el PC, en la misma fila)
+      poner(barra, r.campo && casillaFuera(r), h('div', { class: 'barra-fila' },
+        h('span', { class: 'barra-nombre', text: nombreDe(b, n) }),
+        b.t !== 'portada' && herr('⬆️', () => mover(sel.i, -1), { titulo: 'Subir' }),
+        b.t !== 'portada' && herr('⬇️', () => mover(sel.i, 1), { titulo: 'Bajar' }),
+        herr('＋ Añadir', () => anadirMenu(sel.i), { titulo: 'Añadir debajo' }),
+        b.t === 'tabla' && herr('🙈 Columnas', () => columnas(sel.i)),
+        b.t === 'tabla' && herr('＋ Fila', () => filaNueva(sel.i, r.fila === undefined ? b.filas.length - 1 : r.fila), { titulo: 'Añadir una fila debajo' }),
+        b.t === 'tabla' && r.fila !== undefined && herr('🗑️ Fila', () => { const i = sel.i; sel = { i, ref: null }; cambiarX((B) => { B[i].filas.splice(r.fila, 1); if (B[i].editarFilas) B[i].editarFilas.splice(r.fila, 1); }); }, { peligro: true, titulo: 'Quitar esta fila', descartar: true }),
+        b.t === 'fotos' && b.paneles.length > 1 && herr(`▦ ${b.cols ? `${b.cols} por fila` : 'Por fila'}`, () => fotosPorFila(sel.i), { titulo: 'Cuántas fotos por fila' }),
+        b.t === 'lista' && r.item !== undefined && herr('🗑️ Línea', () => { const i = sel.i; sel = { i, ref: null }; cambiarX((B) => escribirCampo(B[i], r, '', B)); }, { peligro: true, titulo: 'Quitar esta línea', descartar: true }),
+        enlace && enlace.tipo === 'apuntes' && herr('📝 Su apunte', () => { const e = leerCuaderno().entradas.find((y) => y.id === enlace.ids[0]); if (e) editarApunte(e, pintar); }),
+        b.t === 'fotos' && herr(b.pie ? '↩️ Pie automático' : '✍️ Pie a mano', () => cambiarX((B) => { const z = B[sel.i]; if (z.pie) delete z.pie; else z.pie = numerar(B)[sel.i].titulo; })),
+        b.t === 'fotos' && (b.quitados || []).length > 0 && herr(`↩️ Fotos quitadas (${b.quitados.length})`, () => cambiarX((B) => { B[sel.i].paneles.push(...B[sel.i].quitados); delete B[sel.i].quitados; })),
+        b.t === 'fotos' && pPanel !== undefined && pPanel > 0 && herr('✂️ Partir aquí', () => partirFigura(sel.i, pPanel), { titulo: 'Partir la figura: desde esta foto, en una figura nueva' }),
+        b.t === 'fotos' && x.bloques[sel.i + 1] && x.bloques[sel.i + 1].t === 'fotos' && herr('⤵️ Juntar con la siguiente', () => juntarFigura(sel.i), { titulo: 'Juntar con la figura siguiente' }),
+        b.t === 'fotos' && pPanel !== undefined && b.paneles[pPanel] && herr('🚫 Quitar esta foto', () => accionPanel(sel.i, pPanel, 'quitar'), { peligro: true }),
+        (b.t === 'h1' || b.t === 'h2') && herr('🗑️ Quitar la sección entera', () => quitarSeccion(sel.i), { peligro: true, titulo: 'Quitar la sección entera (título y todo lo suyo)', descartar: true }),
+        enlace && enlace.tipo === 'abrirReceta' && herr('📋 Cambiarlo en la receta', () => { const rr = recetaDe(enlace.recetaId); if (rr) abrirFormulario(rr, () => {}, { marca: enlace.marca, valor: enlace.valor, desfase: 80 }); }),
+        b.t === 'hueco' && herr('✏️ Escribirlo', () => escribirHueco(sel.i)),
+        b.t !== 'portada' && herr('🗑️ Quitar', () => quitarBloque(sel.i), { peligro: true, titulo: 'Quitar del informe (la bitácora no cambia)', descartar: true }),
+        estadoGuardado));
+    };
+    // ✂️ Partir una figura desde una foto (versión 145): esa y las de detrás pasan a una figura nueva justo debajo,
+    // con lo mismo arriba en su pie y «(continuación)»; las observaciones van con la última
+    const partirFigura = (i, pi) => {
+      cambiarX((B) => {
+        const z = B[i];
+        const usados = new Set(B.map((y) => y.id));
+        let id = `${z.id}p`;
+        for (let k = 2; usados.has(id); k++) id = `${z.id}p${k}`;
+        const nueva = { ...JSON.parse(JSON.stringify(z)), id, paneles: z.paneles.slice(pi), desc: '', quitados: undefined,
+          cabeza: /\(continuación\)$/.test(z.cabeza || '') ? z.cabeza : `${z.cabeza || 'Imágenes'} (continuación)` };
+        delete nueva.pie;
+        delete nueva.quitados;
+        z.paneles = z.paneles.slice(0, pi);
+        if (z.finSesion || z.observaciones) { z.observaciones = ''; z.finSesion = false; }
+        B.splice(i + 1, 0, nueva);
+      });
+      sel = { i: i + 1, ref: null };
+      marcarElegido();
+      pintarBarra();
+      avisar('✂️ Figura partida en dos (solo en el informe)', { texto: 'Deshacer', hacer: deshacer });
+    };
+    // ⤵️ Juntar una figura con la siguiente: sus fotos pasan a esta (y sus observaciones, si las tenía)
+    const juntarFigura = (i) => {
+      cambiarX((B) => {
+        const z = B[i];
+        const sig = B[i + 1];
+        if (!sig || sig.t !== 'fotos') return;
+        z.paneles = [...z.paneles, ...sig.paneles];
+        if (sig.quitados) z.quitados = [...(z.quitados || []), ...sig.quitados];
+        if (sig.observaciones) z.observaciones = [z.observaciones, sig.observaciones].filter(Boolean).join('\n');
+        if (sig.finSesion) z.finSesion = true;
+        B.splice(i + 1, 1);
+      });
+      sel = { i, ref: null };
+      marcarElegido();
+      pintarBarra();
+    };
+    // 🗑️ Quitar una sección entera: el título y todo lo que va debajo hasta el siguiente título de su nivel o mayor
+    const quitarSeccion = (i) => {
+      const B0 = x.bloques;
+      const nivel = B0[i].t === 'h1' ? 1 : 2;
+      let fin = i + 1;
+      while (fin < B0.length && !(B0[fin].t === 'h1' || (nivel === 2 && B0[fin].t === 'h2'))) fin++;
+      const n = fin - i;
+      cambiarX((B) => { B.splice(i, n); });
+      sel = null;
+      pintarBarra();
+      avisar(`Quitada la sección (${n} ${n === 1 ? 'bloque' : 'bloques'}; la bitácora no cambia)`, { texto: 'Deshacer', hacer: deshacer });
+    };
+    // Una fila nueva en una tabla, debajo de la elegida, y ya para escribir en su primera casilla
+    const filaNueva = (i, fila) => {
+      cambiarX((B) => { const z = B[i]; z.filas.splice(fila + 1, 0, z.cab.map(() => '')); if (z.editarFilas) z.editarFilas.splice(fila + 1, 0, null); });
+      const col = (x.bloques[i].cab || []).findIndex((_, k) => !(x.bloques[i].ocultas || []).includes(k));
+      const el = hoja.querySelector(`[data-ref="${claveRef({ i, campo: 'celda', fila: fila + 1, col })}"]`);
+      if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+    };
+    // Cuántas fotos van en cada fila de una figura (en la pantalla, en el PDF y en Word)
+    const fotosPorFila = async (i) => {
+      const b = x.bloques[i];
+      const o = await elegir({ texto: '▦ Fotos por fila', detalle: 'Más por fila, más pequeñas.', opciones: [
+        { texto: `Automático${b.cols ? '' : ' ✓'}`, v: 0 },
+        ...[1, 2, 3, 4].filter((n) => n <= b.paneles.length).map((n) => ({ texto: `${n} por fila${b.cols === n ? ' ✓' : ''}`, v: n }))] });
+      if (o) cambiarX((B) => { if (o.v) B[i].cols = o.v; else delete B[i].cols; });
+    };
+    const mover = (i, d) => {
+      if (i + d < 0 || i + d >= x.bloques.length) return;
+      cambiarX((B) => { [B[i], B[i + d]] = [B[i + d], B[i]]; });
+      sel = { i: i + d, ref: null };
+      marcarElegido();
+      pintarBarra();
+      const el = hoja.querySelector(`[data-i="${i + d}"]`);
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    };
+    const quitarBloque = (i) => {
+      cambiarX((B) => { B.splice(i, 1); });
+      sel = null;
+      pintarBarra();
+      avisar('Quitado del informe (la bitácora no cambia)', { texto: 'Deshacer', hacer: deshacer });
+    };
+    // Añadir algo debajo de i, y ponerse ya a escribir en ello
+    const insertar = (i, nuevo) => {
+      cambiarX((B) => { B.splice(i + 1, 0, nuevo); });
+      sel = { i: i + 1, ref: null };
+      marcarElegido();
+      pintarBarra();
+      const el = hoja.querySelector(`[data-i="${i + 1}"]`);
+      const escribir = el && (el.matches('.escribible') ? el : el.querySelector('.escribible'));
+      if (el) el.scrollIntoView({ block: 'center' });
+      if (escribir) { escribir.focus(); ponerCursor(escribir, null); }
+    };
+    const anadirMenu = async (i) => {
+      const o = await elegir({ texto: '＋ Añadir debajo', opciones: [
+        { texto: '¶ Un párrafo', hacer: () => insertar(i, { t: 'p', texto: '' }) },
+        { texto: '🔠 Un título de sección', hacer: () => insertar(i, { t: 'h1', num: true, texto: '' }) },
+        { texto: '🔡 Un subtítulo', hacer: () => insertar(i, { t: 'h2', num: true, texto: '' }) },
+        { texto: '• Una lista', hacer: () => insertar(i, { t: 'lista', items: [''] }) },
+        { texto: '🖼️ Una figura con fotos del cuaderno', hacer: () => figuraNueva(i) },
+        { texto: '📄 Un salto de página', hacer: () => insertar(i, { t: 'salto' }) }] });
+      if (o) await o.hacer();
+    };
+    // Una figura nueva con fotos del cuaderno (las que se toquen, en ese orden)
+    const figuraNueva = async (i) => {
+      const c = leerCuaderno();
+      const todas = K.fotosDe(c, amb);
+      if (!todas.length) { avisar('Este cuaderno no tiene fotos'); return; }
+      const elegidas = new Set();
+      const rejilla = h('div', { class: 'elegir-fotos' }, todas.map(({ id: fid, entrada }) => {
+        const b = h('button', { type: 'button', class: 'elegir-foto', 'aria-pressed': 'false', title: sinEmoji(K.tituloFoto(c, fid, entrada)),
+          onclick: () => { if (elegidas.has(fid)) elegidas.delete(fid); else elegidas.add(fid); b.setAttribute('aria-pressed', String(elegidas.has(fid))); } }, imagenFoto(fid));
+        return b;
+      }));
+      const pie = h('textarea', { class: 'campo', rows: 2, autocapitalize: 'sentences', placeholder: 'Pie de la figura: qué se ve en estas imágenes' });
+      const r = await preguntar({ texto: '🖼️ Figura nueva', detalle: [h('p', { class: 'dialogo-detalle', text: 'Toca las fotos que van en la figura (salen en el orden en que las toques).' }), rejilla, pie], si: 'Añadir', no: 'Cancelar' });
+      if (!r || !elegidas.size) return;
+      const textoDe = (fid) => {
+        const e = c.entradas.find((y) => (y.fotos || []).includes(fid));
+        const info = K.infoFoto(e, fid);
+        return [c.titulos[fid], info.aumento, info.zona && `zona: ${info.zona}`].filter(Boolean).join(', ');
+      };
+      insertar(i, { t: 'fotos', id: `fn${Date.now().toString(36)}`, paneles: [...elegidas].map((fid) => ({ id: fid, texto: textoDe(fid) })), cabeza: 'Imágenes', desc: '',
+        ...(pie.value.trim() ? { pie: pie.value.trim() } : {}), entradaId: null });
+    };
+    // Lo que falta por escribir (resumen, introducción…): en su sitio, con su título; y, si se quiere,
+    // también para los informes nuevos
+    const SECCIONES = { resumen: ['Resumen', 'sinNumero', 'p'], introduccion: ['Introducción', 'num', 'p'], objetivos: ['Objetivos', 'num', 'lista'],
+      discusion: ['Discusión', 'num', 'p'], conclusiones: ['Conclusiones', 'num', 'lista'], referencias: ['Referencias', 'sinNumero', 'numerada'] };
+    const escribirHueco = async (i) => {
+      const b = x.bloques[i];
+      const clave = b.editar && b.editar.clave;
+      const def = TEXTOS_INFORME.find(([k]) => k === clave);
+      const [tit, numero, forma] = SECCIONES[clave] || [];
+      if (!def || !tit) return;
+      const area = h('textarea', { class: 'campo', rows: Math.max(3, def[3] + 1), autocapitalize: 'sentences', placeholder: def[2] });
+      // (quitada de entrada, como la de la bitácora: versión 144)
+      const paraNuevos = h('input', { type: 'checkbox', checked: false });
+      const r = await preguntar({ texto: `✏️ ${def[1]}`, detalle: [area, h('label', { class: 'parte-opcion' }, paraNuevos, ' Usarlo también en los informes nuevos')], si: 'Guardar', no: 'Cancelar' });
+      if (!r || !area.value.trim()) return;
+      const v = area.value.trim();
+      const ed = { tipo: 'texto', clave };
+      const lineas = v.split('\n').map((s) => s.trim()).filter(Boolean);
+      // (con sus citas vivas: «la Figura 2» sigue a su figura si cambia de número; versión 144)
+      const cuerpoNuevo = forma === 'p' ? v.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).map((p) => ({ t: 'p', texto: citasVivas(p, x.bloques), clase: clave === 'resumen' ? 'resumen' : undefined, editar: ed }))
+        : [{ t: 'lista', items: lineas.map((l) => citasVivas(l, x.bloques)), numerada: forma === 'numerada', editar: ed }];
+      cambiarX((B) => { B.splice(i, 1, { t: 'h1', texto: tit, ...(numero === 'num' ? { num: true } : { sinNumero: true }) }, ...cuerpoNuevo); });
+      if (paraNuevos.checked) guardarTextoInforme(amb, K.fichaCuaderno(leerCuaderno(), amb), clave, v);
+    };
+    // Una imagen: lo que se ve (su título), el aumento y la zona; también en la foto, si se quiere
+    const editarPanel = async (i, pi) => {
+      const b = x.bloques[i];
+      const p = b.paneles[pi];
+      const c = leerCuaderno();
+      const e = c.entradas.find((y) => y.id === b.entradaId) || c.entradas.find((y) => (y.fotos || []).includes(p.id));
+      const info = K.infoFoto(e, p.id);
+      const titulo2 = h('textarea', { class: 'campo', rows: 2, autocapitalize: 'sentences', value: c.titulos[p.id] || '', placeholder: 'Por ejemplo: mapa EDX del cobre' });
+      const aumento = h('input', { class: 'campo', autocomplete: 'off', value: info.aumento || '', placeholder: 'Por ejemplo: 1000 o ×1000' });
+      const zona = h('input', { class: 'campo', autocomplete: 'off', value: info.zona || '', placeholder: 'Por ejemplo: borde de la fibra' });
+      // (quitada de entrada, como las demás: versión 144)
+      const enLaFoto = h('input', { type: 'checkbox', checked: false });
+      const r = await preguntar({ texto: '🖼️ Esta imagen', detalle: [
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Qué se ve' }), titulo2),
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Aumento' }), aumento),
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Zona' }), zona),
+        e && h('label', { class: 'parte-opcion' }, enLaFoto, ' Guardarlo también en la foto (bitácora y Fotos)')],
+      si: 'Guardar', no: 'Cancelar', otro: '🚫 Quitarla de este informe' });
+      if (!r) return;
+      if (r === 'otro') { accionPanel(i, pi, 'quitar'); return; }
+      const t = titulo2.value.trim();
+      const a0 = aumento.value.trim();
+      const a = a0 && /^[\d.,]+$/.test(a0) ? `×${a0}` : a0.slice(0, 20);
+      const z = zona.value.trim().slice(0, 40);
+      cambiarX((B) => { B[i].paneles[pi].texto = [t, a, z && `zona: ${z}`].filter(Boolean).join(', '); });
+      if (e && enLaFoto.checked) {
+        cambiarCuaderno((d) => {
+          if (t) d.titulos[p.id] = t.slice(0, 200); else delete d.titulos[p.id];
+          const y = d.entradas.find((q) => q.id === e.id);
+          if (!y) return;
+          const n = { ...((y.fotosInfo || {})[p.id] || {}) };
+          if (a) n.aumento = a; else delete n.aumento;
+          if (z) n.zona = z; else delete n.zona;
+          y.fotosInfo = { ...(y.fotosInfo || {}) };
+          if (Object.keys(n).length) y.fotosInfo[p.id] = n; else delete y.fotosInfo[p.id];
+          if (!Object.keys(y.fotosInfo).length) delete y.fotosInfo;
+        });
+      }
+    };
+    // 🚫 una imagen (solo en este informe: se puede volver a poner)
+    const accionPanel = (i, pi, accion) => cambiarX((B) => {
+      const ps = B[i].paneles;
+      if (accion !== 'quitar' || !ps[pi]) return;
+      B[i].quitados = [...(B[i].quitados || []), ps[pi]];
+      ps.splice(pi, 1);
+      // (una figura sin imágenes, fuera)
+      if (!ps.length) B.splice(i, 1);
+    });
+    // Fotos arrastradas: el orden nuevo de cada figura (una foto puede haber pasado a otra; la que se queda
+    // sin fotos, fuera)
+    const reordenarFotos = (listas) => cambiarX((B) => {
+      const todas = new Map();
+      for (const b of B) if (b.t === 'fotos') for (const p of b.paneles) todas.set(p.id, p);
+      for (const { lista, ids } of listas) {
+        const b = B[Number(lista)];
+        if (b && b.t === 'fotos') b.paneles = ids.map((fid) => todas.get(fid)).filter(Boolean);
+      }
+      for (let k = B.length - 1; k >= 0; k--) if (B[k].t === 'fotos' && !B[k].paneles.length) B.splice(k, 1);
+    });
+    // Quitar o volver a poner columnas de una tabla
+    const columnas = async (i) => {
+      const b = x.bloques[i];
+      const marcas = b.cab.map((t, k) => h('input', { type: 'checkbox', checked: !(b.ocultas || []).includes(k) }));
+      const r = await preguntar({ texto: '🙈 Columnas que se ven', detalle: b.cab.map((t, k) => h('label', { class: 'parte-opcion' }, marcas[k], ` ${t}`)), si: 'Guardar', no: 'Cancelar' });
+      if (!r) return;
+      const ocultas = marcas.map((m, k) => (m.checked ? null : k)).filter((k) => k !== null);
+      if (ocultas.length === b.cab.length) { avisar('Tiene que quedar al menos una columna'); return; }
+      cambiarX((B) => { B[i].ocultas = ocultas; });
+    };
+
+    // ── El índice (en el PC, a la izquierda): saltar a una sección y, editando, moverlas arrastrando ──
+    const reordenarSecciones = (orden) => cambiarX((B) => {
+      const cortes = B.map((b, k) => (b.t === 'h1' ? k : -1)).filter((k) => k >= 0);
+      if (!cortes.length) return;
+      const trozo = new Map(cortes.map((k, j) => [k, B.slice(k, j + 1 < cortes.length ? cortes[j + 1] : B.length)]));
+      const nuevo = [...B.slice(0, cortes[0]), ...orden.flatMap((k) => trozo.get(k) || [])];
+      if (nuevo.length === B.length) B.splice(0, B.length, ...nuevo);
+    });
+    const pintarIndice = () => {
+      const N = numerar(x.bloques);
+      const secciones = [];
+      N.forEach((b, k) => {
+        if (b.t === 'h1') secciones.push({ k, b, dentro: [] });
+        else if (secciones.length && (b.t === 'h2' || b.t === 'tabla' || b.t === 'arbol' || b.t === 'fotos')) secciones[secciones.length - 1].dentro.push({ k, b });
+      });
+      const ir = (k) => { const el = hoja.querySelector(`[data-i="${k}"]`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      const texto = (b) => (b.t === 'h1' || b.t === 'h2' ? b.texto : `${b.n}. ${sinEmoji(b.t === 'fotos' ? b.pie || b.cabeza || b.titulo : b.titulo || '')}`);
+      const lista = h('div', { class: 'indice-lista', 'data-lista': 'indice' }, secciones.map(({ k, b, dentro }) => h('div', { class: 'indice-seccion', 'data-id': String(k) },
+        h('button', { type: 'button', class: 'indice-h1', 'data-k': String(k), text: texto(b), onclick: () => ir(k) }),
+        dentro.map((d) => h('button', { type: 'button', class: d.b.t === 'h2' ? 'indice-h2' : 'indice-fig', 'data-k': String(d.k), text: texto(d.b), title: texto(d.b), onclick: () => ir(d.k) })))));
+      const zona = h('div', {}, lista);
+      poner(indice, h('p', { class: 'indice-titulo', text: 'Índice' }), secciones.length ? zona : h('p', { class: 'nota', text: 'Sin secciones' }),
+        editando && secciones.length > 1 && h('p', { class: 'nota indice-pista', text: 'Mantén pulsada una sección para moverla entera' }));
+      if (editando) mantenerYArrastrar(zona, (listas) => reordenarSecciones(listas[0].ids.map(Number)));
+      marcarActual();
+    };
+    // En el índice, marcada la sección (o figura) por la que se va leyendo
+    const marcarActual = () => {
+      if (!indice.offsetParent) return;
+      const tope = cuerpo.getBoundingClientRect().top + 140;
+      let actualK = null;
+      for (const bt of indice.querySelectorAll('[data-k]')) {
+        const el = hoja.querySelector(`[data-i="${bt.dataset.k}"]`);
+        if (el && el.getBoundingClientRect().top <= tope) actualK = bt.dataset.k;
+      }
+      for (const bt of indice.querySelectorAll('[data-k]')) bt.classList.toggle('actual', bt.dataset.k === actualK);
+      const marcado = indice.querySelector('.actual');
+      if (marcado && (marcado.offsetTop < indice.scrollTop || marcado.offsetTop > indice.scrollTop + indice.clientHeight - 30)) indice.scrollTop = marcado.offsetTop - indice.clientHeight / 2;
+    };
+    let pendienteMarcar = false;
+    const alDesplazar = () => { if (pendienteMarcar) return; pendienteMarcar = true; requestAnimationFrame(() => { pendienteMarcar = false; marcarActual(); }); };
+    cuerpo.addEventListener('scroll', alDesplazar, { passive: true });
+
+    // ── «Qué incluir» también en el informe que se edita (versión 142; lo pidió el usuario: «que lo de qué
+    // incluir también salga en el que estás editando»). Al cambiar algo se quita o se pone SOLO esa parte
+    // (el procedimiento, las fotos de Caracterización, un anexo), hecha con los datos de ahora; lo demás que
+    // se haya editado se queda. Se deshace con ↶ ──
+    const OPCIONES = { procedimiento: 'conReceta', variaciones: 'conVariaciones', historia: 'conHistoria', historiaDis: 'conHistoriaDis', anterior: 'conAnterior' };
+    // La zona de cada bloque: la suya (los hechos desde la versión 142) o, en los de antes, por su título
+    const zonasDe = (B) => {
+      let z = null;
+      const zs = B.some((b) => b.zona) ? B.map((b) => b.zona || null) : B.map((b) => {
+        if (b.t === 'h1') z = /^Historia de cada disoluci/.test(b.texto) ? 'historiaDis' : /^Historia de cada grupo/.test(b.texto) ? 'historia' : /^Historia anterior/.test(b.texto) ? 'anterior' : null;
+        else if (b.t === 'h2') z = /^(Reactivos y cantidades|Procedimiento)/.test(b.texto) ? 'procedimiento' : /^Caracterización/.test(b.texto) ? 'fotos' : null;
+        return z;
+      });
+      // (en los informes de antes de la versión 147, la historia de los grupos y la de las disoluciones iban en un
+      // solo anexo: lo de las disoluciones, desde la primera de ellas, cuenta como su propia parte)
+      let enDis = false;
+      return zs.map((zona, k) => {
+        if (zona !== 'historia') { enDis = false; return zona; }
+        const b = B[k];
+        if (b.t === 'h1') enDis = false;
+        else if (b.t === 'p' && b.editar && b.editar.tipo === 'disolucion') enDis = true;
+        return enDis ? 'historiaDis' : zona;
+      });
+    };
+    const incluidoAhora = () => {
+      const zs = new Set(zonasDe(x.bloques));
+      const guardado = x.incluir || {};
+      return { conReceta: zs.has('procedimiento'), conHistoria: zs.has('historia'), conHistoriaDis: zs.has('historiaDis'), conVariaciones: zs.has('variaciones'), conAnterior: zs.has('anterior'),
+        fotos: zs.has('fotos') ? (guardado.fotos && guardado.fotos !== 'ninguna' ? guardado.fotos : ctx.op().fotos === 'ninguna' ? 'analisis' : ctx.op().fotos) : 'ninguna' };
+    };
+    // Cómo se reconoce un mismo bloque en dos informes (para no repetir números ni romper las citas)
+    const marcasDe = (B) => {
+      const veces = new Map();
+      return B.map((b) => {
+        let m = null;
+        if (b.t === 'tabla') m = `T:${b.titulo}`;
+        else if (b.t === 'arbol') m = `A:${JSON.stringify(b.amb || {})}`;
+        else if (b.t === 'fotos' && b.clave) m = `F:${b.clave}`;
+        else if (b.t === 'h1' || b.t === 'h2') m = `${b.t}:${b.texto}`;
+        else if (b.t === 'portada') m = 'portada';
+        else if (b.t === 'hueco' && b.editar) m = `hueco:${b.editar.clave}`;
+        if (!m) return null;
+        const k = (veces.get(m) || 0) + 1;
+        veces.set(m, k);
+        return `${m}#${k}`;
+      });
+    };
+    const aplicarIncluir = (B, B2, quitar, poner) => {
+      const m1 = marcasDe(B);
+      const m2 = marcasDe(B2);
+      const idPorMarca = new Map(B.map((b, k) => [m1[k], b.id]).filter(([m, i]) => m && i));
+      const usados = new Set(B.map((b) => b.id).filter(Boolean));
+      // (los números de B2 pasan a los de este informe: el mismo bloque, el suyo; uno nuevo, uno que no se repita)
+      const mapa = {};
+      let nuevos = 0;
+      B2.forEach((b, k) => {
+        if (!b.id) return;
+        if (idPorMarca.has(m2[k])) { mapa[b.id] = idPorMarca.get(m2[k]); return; }
+        let id = b.id;
+        while (usados.has(id)) id = `${b.id}n${Date.now().toString(36)}${nuevos++}`;
+        usados.add(id);
+        mapa[b.id] = id;
+      });
+      const re = (s) => (typeof s !== 'string' ? s : s.replace(/⟦(T|F|FS):([^⟧]*)⟧/g, (todo, tipo, ids) => `⟦${tipo}:${ids.split(':').map((i) => mapa[i] || i).join(':')}⟧`));
+      const copia = (b) => {
+        const y = JSON.parse(JSON.stringify(b));
+        if (y.id) y.id = mapa[y.id] || y.id;
+        for (const k of ['texto', 'titulo', 'observaciones', 'desc', 'cabeza', 'pie']) if (typeof y[k] === 'string') y[k] = re(y[k]);
+        if (y.items) y.items = y.items.map(re);
+        if (y.filas) y.filas = y.filas.map((f) => f.map(re));
+        // (con los nombres de los grupos de este informe, si se cambiaron; versión 145)
+        if (x.nombres) {
+          aplicarNombres([y], Object.fromEntries(Object.keys(x.nombres).map((k) => [k, k])), x.nombres);
+          if (y.t === 'arbol') y.nombres = x.nombres;
+        }
+        return y;
+      };
+      // Quitar (y, lo que se rehace, apuntar dónde estaba)
+      const z1 = zonasDe(B);
+      const donde = {};
+      for (let k = B.length - 1; k >= 0; k--) if (quitar.includes(z1[k])) { donde[z1[k]] = k; B.splice(k, 1); }
+      // Poner: cada trozo seguido de esa zona, detrás del bloque que lo precede en el informe nuevo (o donde estaba)
+      const z2 = zonasDe(B2);
+      for (const zona of poner) {
+        const trozos = [];
+        z2.forEach((z, k) => { if (z !== zona) return; const u = trozos[trozos.length - 1]; if (u && u.fin === k) u.fin = k + 1; else trozos.push({ ini: k, fin: k + 1 }); });
+        let primero = true;
+        for (const t of trozos) {
+          const mB = marcasDe(B);
+          // Dónde: lo que se rehace, donde estaba; si no, delante de lo que lo sigue en el informe nuevo (si este
+          // informe lo tiene) o, si no, detrás de lo que lo precede
+          let en = primero && donde[zona] !== undefined ? donde[zona] : -1;
+          // (el título de sección de ese trozo, si este informe no lo tiene —p. ej. «Materiales y métodos»—, va también)
+          const titulos = [];
+          for (let k = t.ini - 1; k >= 0; k--) if (B2[k].t === 'h1') { if (z2[k] !== zona && mB.indexOf(m2[k]) < 0) titulos.push(copia(B2[k])); break; }
+          for (let k = t.fin; k < B2.length && en < 0; k++) { const j = m2[k] ? mB.indexOf(m2[k]) : -1; if (j >= 0) en = j; }
+          if (en < 0 && (zona === 'historia' || zona === 'anterior')) {
+            // (un anexo: delante del primer anexo que venga después en el informe nuevo, o al final)
+            en = B.length;
+          }
+          if (en < 0) {
+            let ancla = -1;
+            for (let k = t.ini - 1; k >= 0 && ancla < 0; k--) {
+              if (!m2[k]) continue;
+              const j = mB.indexOf(m2[k]);
+              if (j >= 0) ancla = j;
+            }
+            en = ancla + 1;
+            // (detrás de todo lo de ese bloque: hasta el siguiente título)
+            while (ancla >= 0 && en < B.length && B[en].t !== 'h1' && B[en].t !== 'h2') en++;
+          }
+          B.splice(en, 0, ...titulos, ...B2.slice(t.ini, t.fin).map(copia));
+          primero = false;
+        }
+      }
+      // (lo de las disoluciones de un anexo de antes, que iba junto con los grupos: si se quitan los grupos, sigue
+      // con su propio título; si se quitan las disoluciones, el título dice solo «grupo»)
+      const zf = zonasDe(B);
+      // (las zonas, apuntadas solo si el informe ya las lleva: si no, se deducen por los títulos)
+      const conZonas = B.some((b) => b.zona);
+      if (conZonas) zf.forEach((z, k) => { if (z === 'historiaDis') B[k].zona = 'historiaDis'; });
+      const iDis = zf.indexOf('historiaDis');
+      if (iDis >= 0 && B[iDis].t !== 'h1') B.splice(iDis, 0, { t: 'h1', texto: 'Historia de cada disolución', sinNumero: true, anexo: true, ...(conZonas ? { zona: 'historiaDis' } : {}) });
+      if (iDis < 0) for (const b of B) if (b.t === 'h1' && b.texto === 'Historia de cada grupo y disolución') b.texto = 'Historia de cada grupo';
+    };
+    const queIncluir = async () => {
+      if (!ctx) return;
+      const ahora = incluidoAhora();
+      const selFotos = h('select', { class: 'campo', 'aria-label': 'Fotos en «Caracterización»' },
+        [['analisis', 'Las de los análisis (microscopio, medidas…)'], ['todas', 'Todas las fotos'], ...ctx.albumes.map((a) => [`album:${a.id}`, `Las del álbum «${a.nombre}»`]), ['ninguna', 'Ninguna']]
+          .map(([v, t]) => h('option', { value: v, text: t, selected: ahora.fotos === v })));
+      const casillas = {};
+      const casilla = (clave, texto) => { casillas[clave] = h('input', { type: 'checkbox', checked: ahora[clave] }); return h('label', { class: 'parte-opcion' }, casillas[clave], ` ${texto}`); };
+      const r = await preguntar({ texto: '⚙️ Qué incluir en este informe', detalle: [
+        h('p', { class: 'dialogo-detalle', text: 'Lo que pongas se hace con los datos de ahora; lo que quites sale del informe (no de la bitácora). Lo demás que hayas editado se queda. Si no te gusta, ↶ lo deshace.' }),
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Fotos en «Caracterización»' }), selFotos),
+        ctx.hayReceta && casilla('conReceta', 'El procedimiento (reactivos, cantidades y pasos)'),
+        casilla('conVariaciones', 'Las diferencias de los grupos finales respecto al procedimiento'),
+        casilla('conHistoria', 'Anexo: la historia completa de cada grupo'),
+        casilla('conHistoriaDis', 'Anexo: la historia de cada disolución'),
+        ctx.hayAnterior && casilla('conAnterior', 'Anexo: la historia de las muestras en otros cuadernos'),
+        ahora.fotos !== 'ninguna' && h('p', { class: 'nota', text: 'Ojo: si cambias las fotos, las figuras de «Caracterización» se vuelven a hacer (lo que hayas cambiado en ellas se pierde).' })],
+      si: 'Aplicar', no: 'Cancelar' });
+      if (!r) return;
+      const quiero = { ...ahora, fotos: selFotos.value };
+      for (const k of Object.keys(casillas)) quiero[k] = casillas[k].checked;
+      const quitar = [];
+      const poner = [];
+      for (const [zona, clave] of Object.entries(OPCIONES)) {
+        if (ahora[clave] && !quiero[clave]) quitar.push(zona);
+        if (!ahora[clave] && quiero[clave]) poner.push(zona);
+      }
+      if (quiero.fotos !== ahora.fotos) { if (ahora.fotos !== 'ninguna') quitar.push('fotos'); if (quiero.fotos !== 'ninguna') poner.push('fotos'); }
+      if (!quitar.length && !poner.length) return;
+      guardarLoEscrito();
+      const B2 = poner.length ? paraGuardar(modeloInforme(leerCuaderno(), ctx.partesDe(x.cuadernos), { ...ctx.op(), ...quiero, editando: true })) : [];
+      if (poner.some((z) => !zonasDe(B2).includes(z))) avisar('Con los datos de ahora no hay nada que poner en alguna de esas partes');
+      cambiarX((B, y) => { aplicarIncluir(B, B2, quitar, poner); y.incluir = { fotos: quiero.fotos }; });
+      sel = null;
+      pintarBarra();
+      avisar('✅ Cambiado lo que incluye este informe', { texto: 'Deshacer', hacer: deshacer });
+    };
+
+    // ── 🔎 Buscar y reemplazar en todo el informe (versión 144; se vio al rellenar un informe para entregar: el
+    // anexo copia las notas tal cual, con sus faltas y los nombres viejos de las fases, y corregirlas una a una
+    // era muy pesado). Solo cambia el informe (no la bitácora) y se deshace con ↶ ──
+    const patronDe = (q, enteras, mayus) => new RegExp(`${enteras ? '(?<![\\p{L}\\p{N}])' : ''}${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${enteras ? '(?![\\p{L}\\p{N}])' : ''}`, mayus ? 'gu' : 'giu');
+    // Todos los textos de los bloques (fn recibe un texto y da el nuevo); las marcas de las citas no se tocan
+    const porTextos = (B, fn) => {
+      const r = (s) => (typeof s === 'string' ? s.split(/(⟦[^⟧]*⟧)/).map((t, k) => (k % 2 ? t : fn(t))).join('') : s);
+      for (const b of B) {
+        for (const k of ['texto', 'titulo', 'observaciones', 'desc', 'cabeza', 'pie', 'autores', 'institucion', 'fecha']) if (typeof b[k] === 'string') b[k] = r(b[k]);
+        if (b.items) b.items = b.items.map(r);
+        if (b.filas) b.filas = b.filas.map((f) => f.map(r));
+        if (b.cab) b.cab = b.cab.map(r);
+        if (b.detalles) b.detalles = b.detalles.map(r);
+        for (const p of b.paneles || []) p.texto = r(p.texto);
+      }
+    };
+    const buscarYReemplazar = async () => {
+      guardarLoEscrito();
+      soltarFoco();
+      const buscar = h('input', { class: 'campo', autocomplete: 'off', 'aria-label': 'Buscar', placeholder: 'Buscar: labado' });
+      const por = h('input', { class: 'campo', autocomplete: 'off', 'aria-label': 'Reemplazar por', placeholder: 'Reemplazar por: lavado' });
+      const enteras = h('input', { type: 'checkbox', checked: true });
+      const mayus = h('input', { type: 'checkbox', checked: false });
+      const cuenta = h('p', { class: 'nota', 'aria-live': 'polite' });
+      const contar = () => {
+        const q = buscar.value;
+        if (!q) { cuenta.textContent = 'Escribe lo que quieres buscar.'; return 0; }
+        let n = 0;
+        const re = patronDe(q, enteras.checked, mayus.checked);
+        porTextos(JSON.parse(JSON.stringify(leerX().bloques)), (t) => { n += (t.match(re) || []).length; return t; });
+        cuenta.textContent = n ? `Sale ${n} ${n === 1 ? 'vez' : 'veces'} en el informe.` : 'No sale en el informe.';
+        return n;
+      };
+      for (const el of [buscar, enteras, mayus]) el.addEventListener('input', contar);
+      contar();
+      setTimeout(() => buscar.focus(), 50);
+      const r = await preguntar({ texto: '🔎 Buscar y reemplazar en el informe', detalle: [
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Buscar' }), buscar),
+        h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Reemplazar por' }), por),
+        h('label', { class: 'parte-opcion' }, enteras, ' Solo palabras enteras'),
+        h('label', { class: 'parte-opcion' }, mayus, ' Distinguir mayúsculas'),
+        cuenta,
+        h('p', { class: 'nota', text: 'Solo cambia este informe (la bitácora se queda como está). ↶ lo deshace.' })],
+      si: 'Reemplazar todo', no: 'Cancelar' });
+      if (!r || !buscar.value) return;
+      const n = contar();
+      if (!n) { avisar('No sale en el informe'); return; }
+      const re = patronDe(buscar.value, enteras.checked, mayus.checked);
+      cambiarX((B) => porTextos(B, (t) => t.replace(re, () => por.value)));
+      avisar(`✅ Cambiado en ${n} ${n === 1 ? 'sitio' : 'sitios'} (solo en el informe)`, { texto: 'Deshacer', hacer: deshacer });
+    };
+
+    // ── 🏷️ Nombres de los grupos para el informe (versión 145; lo propuso Claude al rellenar un informe para
+    // entregar: «2c ph 7?» o «2 ciclo ph 6» son nombres de laboratorio). Cambian en todo el informe —textos,
+    // tablas, pies, el árbol— y se recuerdan (x.nombres) para lo que se añada luego con «Qué incluir». La bitácora
+    // sigue con sus nombres ──
+    const propuestaNombre = (n) => {
+      const ciclos = /^(\d+)\s*c(?:iclos?)?\b/i.exec(n);
+      const ph = /ph\s*([\d.,]+)(\?)?|([\d.,]+)(\?)?\s*ph/i.exec(n);
+      if (!ciclos || !ph) return n;
+      return `${ciclos[1]}C, pH ${(ph[1] || ph[3]).replace('.', ',')}${ph[2] || ph[4] ? ' (aprox.)' : ''}`;
+    };
+    const aplicarNombres = (B, de, a) => {
+      // (en dos pasos, para que un nombre nuevo igual a otro viejo no se cambie dos veces; los más largos primero)
+      const pares = Object.keys(de).filter((k) => de[k] !== a[k]).sort((p, q) => de[q].length - de[p].length);
+      if (!pares.length) return;
+      const marca = (k) => `\u0000${k}\u0000`;
+      pares.forEach((k, j) => { const re = patronDe(de[k], true, true); porTextos(B, (t) => t.replace(re, () => marca(j))); });
+      pares.forEach((k, j) => porTextos(B, (t) => t.split(marca(j)).join(a[k])));
+    };
+    const nombresGrupos = async () => {
+      guardarLoEscrito();
+      soltarFoco();
+      const c = leerCuaderno();
+      const partes = ctx ? ctx.partesDe(x.cuadernos) : [{ amb }];
+      const grupos = [...new Set(partes.flatMap((p) => K.gruposDe(c, p.amb).map((g) => g.nombre)))];
+      if (!grupos.length) { avisar('Este informe no tiene grupos de muestras'); return; }
+      const ahora = x.nombres || {};
+      const campos = grupos.map((g) => ({ g, el: h('input', { class: 'campo', autocomplete: 'off', value: ahora[g] || g, 'aria-label': `Nombre en el informe de «${g}»` }) }));
+      const r = await preguntar({ texto: '🏷️ Nombres de los grupos en este informe', detalle: [
+        h('p', { class: 'dialogo-detalle', text: 'Cómo se llama cada grupo en el informe (en textos, tablas, pies y en el árbol). En la bitácora siguen con su nombre.' }),
+        h('button', { class: 'boton discreto', type: 'button', text: '✨ Proponer nombres («2c ph 8.4» → «2C, pH 8,4»)', onclick: () => { for (const f of campos) f.el.value = propuestaNombre(f.el.value); } }),
+        campos.map((f) => h('label', { class: 'etiqueta-campo' }, h('span', { text: f.g }), f.el))],
+      si: 'Cambiar en el informe', no: 'Cancelar' });
+      if (!r) return;
+      const de = Object.fromEntries(grupos.map((g) => [g, ahora[g] || g]));
+      const a = Object.fromEntries(campos.map((f) => [f.g, f.el.value.trim() || f.g]));
+      if (grupos.every((g) => de[g] === a[g])) return;
+      const nuevos = Object.fromEntries(grupos.filter((g) => a[g] !== g).map((g) => [g, a[g]]));
+      cambiarX((B, y) => {
+        aplicarNombres(B, de, a);
+        for (const b of B) if (b.t === 'arbol') { if (Object.keys(nuevos).length) b.nombres = nuevos; else delete b.nombres; }
+        if (Object.keys(nuevos).length) y.nombres = nuevos; else delete y.nombres;
+      });
+      avisar('✅ Nombres cambiados en el informe (la bitácora sigue igual)', { texto: 'Deshacer', hacer: deshacer });
+    };
+
+    // ── PDF, Word y el nombre ──
+    const pdf = async () => {
+      guardarLoEscrito();
+      // (sin las marcas ni los huecos del modo de editar)
+      if (editando) { editando = false; sel = null; pintar(); }
+      await actual.listo;
+      imprimirInforme(actual.el, nombreArchivo(x.nombre));
+    };
+    const word = async () => {
+      guardarLoEscrito();
+      avisar('Preparando el documento de Word…');
+      try {
+        const blob = await informeDocx(leerX().bloques);
+        const nombre = `${nombreArchivo(x.nombre)}.docx`;
+        const donde = await guardarBinario(blob, nombre, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        avisar(`✅ Guardado «${nombre}» en ${donde}`);
+      } catch (e) {
+        if (!(e && e.name === 'AbortError')) avisar(`No se ha podido hacer el Word (${(e && e.message) || 'error'})`);
+      }
+    };
+    const renombrar = async () => {
+      const v = await preguntar({ texto: 'Nombre del informe', campo: { value: x.nombre, autocapitalize: 'sentences' }, si: 'Guardar', no: 'Cancelar' });
+      if (v === null || !v.trim()) return;
+      cambiarCuaderno((d) => { const y = (d.informes || []).find((z) => z.id === id); if (y) { y.nombre = v.trim().slice(0, 80); y.mod = Date.now(); } });
+      pintar();
+    };
+    const mas = async () => {
+      const o = await elegir({ texto: x.nombre, opciones: [
+        { texto: '🖨️ PDF o imprimir', hacer: pdf },
+        { texto: '📄 Word (.docx), para seguir editándolo', hacer: word },
+        ctx && { texto: '⚙️ Qué incluir (procedimiento, fotos, anexos)', hacer: () => { if (!editando) { editando = true; pintar(); } return queIncluir(); } },
+        { texto: '🔎 Buscar y reemplazar en el informe', hacer: () => { if (!editando) { editando = true; pintar(); } return buscarYReemplazar(); } },
+        { texto: '🏷️ Nombres de los grupos en el informe', hacer: () => { if (!editando) { editando = true; pintar(); } return nombresGrupos(); } },
+        { texto: '✏️ Cambiar el nombre', hacer: renombrar }] });
+      if (o) await o.hacer();
+    };
+    poner(cuerpo, barra, h('div', { class: 'informe-con-indice' }, indice, hoja));
     pintar();
   };
+
+  // Un cuaderno. Con receta: su árbol, sus grupos (al tocar uno, lo que se puede hacer con él), sus
+  // disoluciones, sus fotos y su bitácora; sin receta: solo notas y fotos. A la derecha, la pestaña
+  // de las notas libres (abrirNotas). alVolver: para repintar la lista de antes
 
   const abrirCuadernoDe = (cid, recetaIdInicial, alVolver, consultaInicial = '') => {
     // Cambiar el nombre del cuaderno, su receta o de qué va: con el ✏️ de su cajita de arriba (lo pone
     // pintar). Antes había otro ✏️ en la barra del título, repetido (versión 122, lo pidió el usuario)
     let editarEste = null;
     const { cuerpo, titulo, panel } = abrirPanel('📓', null, alVolver);
+    // (la barra lateral del PC marca este cuaderno como abierto)
+    panel.dataset.lateral = `c:${cid}`;
     let filtro = 'todos'; // 'todos', o el id de un grupo
     let busqueda = consultaInicial; // lo escrito en «Buscar en la bitácora» (o lo buscado en todos los cuadernos)
     let buscador = null;
@@ -3725,6 +6272,7 @@
       })();
       const bBitacora = [
         h('h3', { text: '📖 Bitácora' }),
+        listaPropuestas(c, amb, pintar),
         grupos.length > 1 && h('div', { class: 'chips' },
           [{ id: 'todos', nombre: 'Todos' }, ...grupos].map((g) => h('button', { class: 'chip', 'aria-pressed': String(filtro === g.id), text: g.nombre, onclick: () => { filtro = g.id; pintar(); } }))),
         h('button', { class: 'boton secundario', text: '✍️ Apuntar una nota', onclick: nuevaNota }),
@@ -3734,7 +6282,7 @@
         botonCopiar(`${receta.nombre} · ${ficha.nombre}`, entradas)];
       const bMas = [
         h('h3', { text: 'Más' }),
-        h('button', { class: 'boton secundario', text: '📄 Hacer un informe con toda la historia (PDF)', onclick: () => abrirInforme(receta, amb, ficha) }),
+        h('button', { class: 'boton secundario', text: '📄 Hacer el informe (PDF o Word)', onclick: () => abrirInforme(receta, amb, ficha, pintar) }),
         rid && h('button', { class: 'boton secundario', text: '📓 Empezar otro cuaderno con esta receta (otro experimento)', onclick: async () => {
           const id = await editarFichaCuaderno(null, rid);
           if (!id || id === 'quitado') return;
@@ -4057,7 +6605,9 @@
       };
       caract.addEventListener('input', () => { estadoCaract.textContent = 'Guardando…'; clearTimeout(relojCaract); relojCaract = setTimeout(guardarCaract, 700); });
       caract.addEventListener('blur', () => { if (relojCaract) guardarCaract(); });
-      poner(cuerpo,
+      // (tres bloques: lo de arriba, su historia y «Más»; en el PC, la historia va a la derecha: versión 136)
+      cuerpo.classList.add('cuerpo-grupo');
+      poner(cuerpo, h('div', { class: 'grupo-bloque grupo-arriba' },
         h('div', { class: 'caja grupo-estado' },
           g.muestras != null && h('p', { class: 'grupo-cuantas', text: muestrasTexto(g.muestras) }),
           h('p', { text: textoEstado(est) }),
@@ -4086,17 +6636,19 @@
             h('button', { class: 'boton secundario', text: '🔗 Juntar con otro grupo', onclick: juntarCon }),
             h('button', { class: 'boton secundario', text: '📏 Apuntar una medida', onclick: medir }),
             h('button', { class: 'boton secundario', text: '📤 Pasar a otro cuaderno', onclick: pasarACuaderno }),
-            h('button', { class: 'boton secundario', text: '📷 Nota o fotos', onclick: nota })),
+            h('button', { class: 'boton secundario', text: '📷 Nota o fotos', onclick: nota }))),
+      h('div', { class: 'grupo-bloque grupo-historia' },
         h('h3', { text: '📖 Su historia' }),
         historia.length
           ? bitacora(historia, { desde: g.id, alCambiar: pintar })
           : h('p', { class: 'nota', text: 'Aún no hay nada apuntado de este grupo.' }),
-        botonCopiar(`${receta.nombre} · ${g.nombre}`, historia),
+        botonCopiar(`${receta.nombre} · ${g.nombre}`, historia)),
+      h('div', { class: 'grupo-bloque grupo-mas' },
         h('h3', { text: 'Más' }),
         g.vieneDe && h('button', { class: 'boton secundario', text: '↩️ Deshacer: devolverlas a su grupo de origen', onclick: () => deshacerElPaso(g.id, g.vieneCuaderno) }),
         g.pasadoA && h('button', { class: 'boton secundario', text: `↩️ Deshacer el paso a «${est.cuaderno}»`, onclick: () => deshacerElPaso(g.pasadoA, est.cuaderno) }),
         h('button', { class: 'boton secundario', text: '✏️ Cambiar el nombre, las muestras o lo que le toca', onclick: editar }),
-        h('button', { class: 'boton discreto', text: '🗑️ Quitar el grupo', onclick: quitar }));
+        h('button', { class: 'boton discreto', text: '🗑️ Quitar el grupo', onclick: quitar })));
     };
     alLlegarCambios(cuerpo, () => pintar());
     pintar();
@@ -4166,6 +6718,10 @@
         const datos = lineas.filter((x) => !x.cantidad).map((x) => hoja.datos.find((y) => y.id === x.id)).filter(Boolean);
         if (!datos.length) { avisar('Esta disolución no tiene números que corregir'); return; }
         const antes = new Map(datos.map((x) => [x.id, x.valor]));
+        // (en una de antes de guardar sus cuentas, lo que su tabla no tenía —la riqueza o la densidad de un ácido,
+        // que salen de la receta de ahora— cuenta como nuevo: si no, con esos números ya buenos no dejaba guardar;
+        // versión 150, el HNO3 nº 1 del usuario)
+        if (deAhora) for (const x of datos) if (!(d.composicion || []).some((y) => y.id === x.id || y.nombre.trim().toLowerCase() === x.nombre.trim().toLowerCase())) antes.set(x.id, null);
         const resultado = h('div', { class: 'caja composicion' });
         const pintarResultado = () => poner(resultado, Q.composicionDe(hoja, d.fase, rango).filter((x) => x.cantidad).map((x) => h('div', { class: 'dato calculo' },
           h('div', { class: 'dato-nombre', text: x.nombre }), h('span', { class: 'calculo-valor', text: x.texto }))));
@@ -4237,9 +6793,10 @@
   };
 
   // ─── Las fotos de una receta: el recopilatorio y la comparación ───
-  const fotoImg = (id) => {
+  // (mini: la miniatura, para la galería; sin ella, la foto entera, para comparar y ampliar)
+  const fotoImg = (id, mini = false) => {
     const img = h('img', { alt: '', loading: 'lazy', decoding: 'async' });
-    urlDe(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
+    (mini === 'vista' ? urlVista : mini ? urlMini : urlDe)(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
     return img;
   };
   // Lo que se hizo en un apunte, en corto (de una nota, su primera línea)
@@ -4325,7 +6882,7 @@
       const celda = (aumento, k) => {
         const lista = fotos.filter((f) => (K.infoFoto(f.entrada, f.id).aumento || '') === aumento && claveG(f.entrada) === k);
         return h('td', { class: 'celda-foto' }, lista.map((f) => h('button', { class: 'foto-mini', 'aria-label': `Ver ${K.tituloFoto(c, f.id, f.entrada)} en grande`,
-          title: `${fechaCorta(f.entrada.fecha)} · ${K.momentoDe(c, f.entrada.grupoId, f.entrada.fecha)}`, onclick: () => verFoto(f.id, pintar) }, fotoImg(f.id))));
+          title: `${fechaCorta(f.entrada.fecha)} · ${K.momentoDe(c, f.entrada.grupoId, f.entrada.fecha)}`, onclick: () => verFoto(f.id, pintar) }, fotoImg(f.id, true))));
       };
       poner(cuerpo,
         h('div', { class: 'chips' }, h('span', { class: 'chips-rotulo', text: 'Ver:' }),
@@ -4399,7 +6956,7 @@
         const n = elegidas.indexOf(id);
         const color = colores.get(entrada.grupoId);
         return h('div', { class: `foto-tarjeta${n >= 0 ? ' elegida' : ''}${color ? ' con-color' : ''}`, style: color ? `--gc: ${color}` : null },
-          h('button', { class: 'foto-imagen', 'aria-label': 'Ver en grande', onclick: () => verFoto(id, pintar) }, fotoImg(id)),
+          h('button', { class: 'foto-imagen', 'aria-label': 'Ver en grande', onclick: () => verFoto(id, pintar) }, fotoImg(id, true)),
           // El círculo: vacío, o el número con el que sale al comparar
           h('button', { class: 'foto-marca', 'aria-label': n >= 0 ? 'Desmarcar' : 'Marcar', 'aria-pressed': String(n >= 0), text: n >= 0 ? String(n + 1) : '', onclick: () => marcar(id) }),
           pieFoto(c, id, entrada, color, true));
@@ -4593,8 +7150,11 @@
       const tarjeta = (id, i) => {
         const e = entradaDe.get(id);
         const asa = h('button', { class: 'asa', 'aria-label': 'Mover: arrastra', text: '✥' });
-        const img = fotoImg(id);
+        // (la vista de 2000 px; al ampliar, la entera a toda su resolución: versión 126)
+        const img = fotoImg(id, 'vista');
         const marco = h('div', { class: 'comp-marco' }, img);
+        const op = { entera: () => urlDe(id) };
+        window.Fotos.leer(id).then((f) => { if (f) { op.ancho = f.ancho; op.alto = f.alto; } }).catch(() => {});
         const color = colores.get(e.grupoId);
         const t = h('div', { class: `comp-tarjeta${color ? ' con-color' : ''}`, style: color ? `--gc: ${color}` : null, 'data-id': id },
           h('div', { class: 'comp-barra' }, asa,
@@ -4606,7 +7166,7 @@
           pieFoto(c, id, e, color));
         // Se amplía ahí mismo con los dedos (lo pidió el usuario); con «🔗 Ampliar todas igual», las
         // demás hacen lo mismo (la misma zona en todas)
-        const z = hacerZoom(marco, img, (estado) => { if (juntas()) for (const [otro, oz] of zooms) if (otro !== id) oz.fijar(estado); }, false);
+        const z = hacerZoom(marco, img, (estado) => { if (juntas()) for (const [otro, oz] of zooms) if (otro !== id) oz.fijar(estado); }, false, op);
         zooms.set(id, z);
         arrastrable(t, asa);
         return t;
@@ -4685,7 +7245,7 @@
   const datosLocales = () => {
     const c = leerCuaderno();
     const porId = (lista) => Object.fromEntries(lista.map((x) => [x.id, x]));
-    return { recetas: porId(recetas), grupos: porId(c.grupos), entradas: porId(c.entradas), disoluciones: porId(c.disoluciones), carpetas: porId(c.carpetas), cuadernos: porId(c.cuadernos), albumes: porId(c.albumes), titulos: { ...c.titulos }, comparar: { ...c.comparar } };
+    return { recetas: porId(recetas), grupos: porId(c.grupos), entradas: porId(c.entradas), disoluciones: porId(c.disoluciones), carpetas: porId(c.carpetas), cuadernos: porId(c.cuadernos), albumes: porId(c.albumes), informes: porId(c.informes || []), titulos: { ...c.titulos }, comparar: { ...c.comparar } };
   };
   // Las fotos que usa algo: las de los apuntes y la de cada cuaderno. Las demás son de cosas que se
   // borraron (versión 124: no se pasan al PC ni se traen de él, y se pueden quitar en Ajustes)
@@ -4693,10 +7253,21 @@
     const s = new Set();
     for (const e of c.entradas) for (const f of e.fotos || []) s.add(f);
     for (const k of c.cuadernos) if (k.foto) s.add(k.foto);
+    // (y las de los informes guardados: aunque se borre su apunte, el informe las sigue enseñando)
+    for (const x of c.informes || []) for (const b of x.bloques || []) for (const p of b.paneles || []) s.add(p.id);
     return s;
   };
+  // La hora del PC (versión 126): al juntar, «gana lo más nuevo» de cada cosa, y eso se decide con la
+  // hora de cada aparato. Si el móvil y el PC no tienen la misma hora, un cambio podía perderse. Ahora
+  // los cambios se sellan con la hora del PC (quimica.pc-desfase: cuánto va el PC por delante, en ms;
+  // se mide al hablar con él). Sin PC, la de aquí
+  const ahoraPC = () => { const d = Number(leer('quimica.pc-desfase', 0)); return Date.now() + (isFinite(d) && Math.abs(d) < 365 * 864e5 ? d : 0); };
+  const medirDesfase = (antes, despues, ahoraDelPC) => {
+    if (typeof ahoraDelPC !== 'number' || despues - antes > 10000) return; // (si tardó mucho, no es fiable)
+    guardar('quimica.pc-desfase', Math.round(ahoraDelPC - (antes + despues) / 2));
+  };
   const sellar = () => {
-    const meta = S.sellar(leer('quimica.sincro', null), datosLocales(), Date.now());
+    const meta = S.sellar(leer('quimica.sincro', null), datosLocales(), ahoraPC());
     guardar('quimica.sincro', meta);
     return meta;
   };
@@ -4723,7 +7294,7 @@
     const nuevas = Object.values(datos.recetas).filter((r) => valida(r) && !recetas.some((x) => x.id === r.id));
     recetas = [...nuevas, ...quedan];
     guardar('quimica.recetas', recetas);
-    guardar('quimica.cuaderno', { grupos: Object.values(datos.grupos), entradas: Object.values(datos.entradas), disoluciones: Object.values(datos.disoluciones), carpetas: Object.values(datos.carpetas || {}), cuadernos: Object.values(datos.cuadernos || {}), albumes: Object.values(datos.albumes || {}), titulos: datos.titulos, comparar: datos.comparar });
+    guardar('quimica.cuaderno', { grupos: Object.values(datos.grupos), entradas: Object.values(datos.entradas), disoluciones: Object.values(datos.disoluciones), carpetas: Object.values(datos.carpetas || {}), cuadernos: Object.values(datos.cuadernos || {}), albumes: Object.values(datos.albumes || {}), informes: Object.values(datos.informes || {}), titulos: datos.titulos, comparar: datos.comparar });
     guardar('quimica.sincro', meta);
     const despues = datosLocales();
     return S.COLECCIONES.filter((c) => antes[c] !== S.huella(despues[c]));
@@ -4751,7 +7322,9 @@
       // Que el programa del PC sepa guardar todo lo de aquí: uno abierto antes de una versión
       // nueva no conocería lo nuevo (pasó con las disoluciones). Si no, no se sincroniza
       if (!pcAlDia || pcAlDia.base !== pc.base || Date.now() - pcAlDia.fecha > 60000) {
+        const antesHola = Date.now();
         const hola = await (await pedirPC(pc.base, pc.codigo, '/api/hola', { espera: 6000 })).json();
+        medirDesfase(antesHola, Date.now(), hola.ahora);
         guardarUsuarioDelPC(hola.usuario);
         const sabe = Array.isArray(hola.colecciones) ? hola.colecciones : [];
         const falta = S.COLECCIONES.filter((c) => !sabe.includes(c));
@@ -4764,7 +7337,9 @@
       const ult = ultimaSincro;
       if (!avisarFallo && ult && ult.base === pc.base && ult.version != null && Date.now() - ult.fecha < 120000
         && S.huella(datosLocales()) === ult.huella) {
+        const antesV = Date.now();
         const v = await pedirPC(pc.base, pc.codigo, '/api/version', { espera: 6000 }).then((x) => x.json()).catch(() => null);
+        if (v) medirDesfase(antesV, Date.now(), v.ahora);
         if (v && v.version === ult.version && v.arranque === ult.arranque) {
           estadoPC = { ok: true, fecha: Date.now(), cambios: 0, fotos: 0 };
           return;
@@ -4924,6 +7499,7 @@
           guardar('quimica.pc-ultima', { fecha: Date.now(), huella: S.huella(datosLocales()) });
           localStorage.removeItem('quimica.pc-pendiente');
           guardarUsuarioDelPC(e.data.usuario);
+          if (typeof e.data.desfase === 'number' && isFinite(e.data.desfase)) guardar('quimica.pc-desfase', e.data.desfase);
           estadoPC = { ok: true, fecha: Date.now(), cambios: cambiadas.length, fotos };
           if (cambiadas.length) {
             pintarLista();
@@ -5001,7 +7577,7 @@
   // `quimica.usuarios` = { activo, lista: [{ id, nombre }] }; el primero, `u1`, sigue con `quimica-fotos`.
   const DEL_USUARIO = ['quimica.recetas', 'quimica.cuaderno', 'quimica.sincro', 'quimica.hechos', 'quimica.ciclos', 'quimica.donde',
     'quimica.pagina-receta', 'quimica.cuaderno-actual', 'quimica.calculadora', 'quimica.preparan', 'quimica.cronometros',
-    'quimica.pc', 'quimica.pc-ultima', 'quimica.pc-pendiente', 'quimica.pc-datos-id', 'quimica.borrador-receta', 'quimica.borrador',
+    'quimica.pc', 'quimica.pc-ultima', 'quimica.pc-pendiente', 'quimica.pc-datos-id', 'quimica.pc-desfase', 'quimica.borrador-receta', 'quimica.borrador',
     'quimica.antes-de-sincronizar', 'quimica.antes-de-recuperar', 'quimica.antes-de-cambiar-de-usuario'];
   const leerUsuarios = () => {
     const r = leer('quimica.usuarios', null);
@@ -5488,7 +8064,8 @@
 
   // ─── Ajustes ───
   const abrirAjustes = () => {
-    const { cuerpo } = abrirPanel('Ajustes');
+    const { cuerpo, panel: panelAjustes } = abrirPanel('Ajustes');
+    panelAjustes.dataset.lateral = 'ajustes';
     const pintar = () => {
       const campoClave = h('input', { class: 'campo', type: 'password', autocomplete: 'off', placeholder: 'Pega aquí la clave' });
       const copia = h('textarea', { class: 'campo', rows: 4, placeholder: 'Pega aquí una copia hecha con «Copiar todas las recetas»' });
@@ -5726,11 +8303,43 @@
   $('b-cuaderno').addEventListener('click', () => { if (vista === 'recetas') atras(); });
   // (con la flecha: si no, abrirCalculadora recibiría el evento del toque como si fueran números de una receta)
   $('b-calculadora').addEventListener('click', () => abrirCalculadora());
+
+  // ─── En el PC: la barra lateral (versión 136; el usuario: «mejórame muchísimo la interfaz en el PC») ───
+  // Siempre a la vista (en una pantalla de 1100 px o más; en el móvil no sale): ir a cuadernos, recetas,
+  // calculadora o ajustes, crear, y la lista de cuadernos para saltar de uno a otro. Ir a algo cierra
+  // antes lo que hubiera abierto (como darle a «atrás» hasta el principio); si un formulario tiene
+  // cambios sin guardar, pregunta y no se va
+  const cerrarTodoY = (luego) => { if (capas.length) cerrarCapas(capas.length, luego); else luego(); };
+  const irDesdeLateral = (a) => cerrarTodoY(() => {
+    if (a === 'recetas') verRecetas();
+    else if (a === 'calculadora') abrirCalculadora();
+    else if (a === 'ajustes') abrirAjustes();
+  });
+  for (const b of document.querySelectorAll('#lateral [data-ir]')) b.addEventListener('click', () => irDesdeLateral(b.dataset.ir));
+  $('l-nuevo').addEventListener('click', () => { const enRecetas = vista === 'recetas'; cerrarTodoY(() => { if (enRecetas) { verRecetas(); abrirNueva(); } else nuevoCuaderno(); }); });
+  pintarLateral = () => {
+    const caja = $('lateral-cuadernos');
+    if (!caja || getComputedStyle($('lateral')).display === 'none') return;
+    const c = leerCuaderno();
+    // Lo abierto: el panel de más abajo que lo dice (un cuaderno, la calculadora, los ajustes) o la vista
+    const abajo = document.querySelector('.panel[data-lateral]');
+    const activo = abajo ? abajo.dataset.lateral : vista;
+    poner(caja, K.todosLosCuadernos(c).map((x) => h('button', { type: 'button', class: `lateral-cuaderno${activo === `c:${x.ambito.cuadernoId}` ? ' activo' : ''}`, title: x.ficha.nombre,
+      onclick: () => cerrarTodoY(() => abrirCuadernoDe(x.ambito.cuadernoId, x.ambito.recetaId, pintarCuadernos)) },
+    h('span', { class: 'lateral-cuaderno-nombre', text: x.ficha.nombre }),
+    h('small', { text: x.ambito.recetaId ? nombreDeReceta(c, x.ambito.recetaId) : 'Sin receta' }))));
+    for (const b of document.querySelectorAll('#lateral [data-ir]')) b.classList.toggle('activo', b.dataset.ir === activo);
+    $('l-nuevo').textContent = vista === 'recetas' ? '＋ Nueva receta' : '＋ Nuevo cuaderno';
+    $('lateral-pie').textContent = `Química · versión ${VERSION_WEB}`;
+  };
+  // (al cambiar el tamaño de la ventana puede aparecer)
+  window.matchMedia('(min-width: 1100px)').addEventListener('change', () => pintarLateral());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') { if (alSalirDeLaApp) alSalirDeLaApp(); return; }
     // Si se vuelve a la app con el formulario abierto, el borrador ya no hace falta
     if (alSalirDeLaApp) quitarBorrador();
     revisarCronometros();
+    recogerCancelados();
     sincronizar();
   });
   // En la app del PC, siempre a la vista (versión 102, lo pidió el usuario: «debería salir un aviso en
@@ -5839,6 +8448,7 @@
   alLlegarCambios($('vista-cuadernos'), () => pintarCuadernos());
   pintarCronometros();
   revisarCronometros();
+  recogerCancelados();
   // En la web (GitHub Pages: el iPhone, o un Android sin la APK): funciona sin internet (sw.js) y se
   // pide que el navegador no borre lo guardado aunque falte sitio
   if (enLaWeb && 'serviceWorker' in navigator) {

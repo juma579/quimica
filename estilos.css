@@ -400,6 +400,8 @@ small.aviso-sentido[hidden] { display: none; }
 .visor-marco { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: none; }
 .visor-marco img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; will-change: transform; user-select: none; -webkit-user-drag: none; }
 .visor-ayuda { color: #888; font-size: 13px; text-align: center; padding-top: 6px; }
+/* Cambiar una foto reducida (de antes de la versión 126) por la original */
+.visor-original { align-self: center; margin: 6px auto 0; padding: 6px 14px; border: 1px solid #ffffff55; border-radius: 999px; background: #ffffff1a; color: #fff; font: inherit; font-size: 13px; }
 /* El recopilatorio de fotos: dos por fila, con su título; el círculo marca las que se comparan */
 .galeria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
 .foto-tarjeta, .comp-tarjeta { position: relative; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; overflow: hidden; }
@@ -563,7 +565,8 @@ small.aviso-sentido[hidden] { display: none; }
 
 /* En una pantalla ancha (el navegador del PC): el contenido en una columna centrada, como en el
    móvil pero más cómoda; las fotos, más por fila, y la comparación, a todo lo ancho */
-@media (min-width: 900px) {
+#lateral { display: none; }
+@media (min-width: 900px) and (max-width: 1099.98px) {
   #principal, .panel-cuerpo { width: 100%; max-width: 860px; margin: 0 auto; }
   .cabecera, .panel-cabecera { padding-left: max(12px, calc((100% - 860px) / 2)); padding-right: max(12px, calc((100% - 860px) / 2)); }
   .panel-cuerpo:has(.comparar) { max-width: none; padding-left: 24px; padding-right: 24px; }
@@ -727,3 +730,309 @@ small.aviso-sentido[hidden] { display: none; }
 /* En el cuaderno las pestañas van DEBAJO de la cajita del nombre y la receta: sin margen negativo
    arriba (en la receta lo llevan porque son lo primero de la pantalla y suben al borde). Versión 122 */
 .pestanas-cuaderno { margin-top: 10px; margin-bottom: 10px; }
+
+/* El informe con forma de trabajo científico (versión 127): letra con remates, texto justificado,
+   secciones numeradas, tablas y figuras con su pie numerado */
+.informe.formal { font-family: "Times New Roman", Times, Georgia, serif; font-size: 15px; line-height: 1.5; text-align: justify; hyphens: auto; }
+.informe.formal .informe-portada { text-align: center; margin: 8px 0 22px; padding-bottom: 14px; border-bottom: 1px solid #c9ccd8; }
+.informe.formal .informe-portada h1 { font-size: 23px; line-height: 1.25; margin: 0 0 10px; }
+.informe.formal .informe-autores { font-size: 16px; }
+.informe.formal .informe-institucion { font-style: italic; }
+.informe.formal .informe-fecha { margin-top: 6px; }
+.informe.formal .informe-detalles { font-size: 12.5px; color: #5b5e6e; margin-top: 6px; }
+.informe.formal h2 { font-size: 18px; margin: 24px 0 8px; padding: 0; border: 0; color: #1b1c22; }
+.informe.formal h3 { font-size: 15.5px; font-style: italic; margin: 16px 0 6px; }
+.informe.formal p { margin: 0 0 8px; }
+.informe.formal .informe-resumen { font-style: italic; }
+.informe.formal .informe-nota { font-size: 13.5px; color: #44475a; }
+.informe.formal .informe-fase { font-weight: 700; margin: 12px 0 4px; }
+.informe.formal .informe-paso { margin: 0 0 4px; padding-left: 22px; text-indent: -22px; }
+.informe.formal .informe-lista { margin: 4px 0 10px; padding-left: 24px; }
+.informe.formal .informe-texto { white-space: pre-wrap; }
+.informe-tabla-caja { margin: 10px 0 14px; break-inside: avoid; }
+.informe-tabla-caja figcaption, .informe-figura figcaption, .informe.formal .informe-foto figcaption { font-size: 13px; color: #1b1c22; text-align: left; margin: 4px 0; }
+.informe.formal .informe-tabla { font-family: inherit; font-size: 13px; text-align: left; }
+.informe.formal .informe-tabla th { background: #e8eaf6; }
+.informe-figura { margin: 10px 0 14px; break-inside: avoid; }
+.informe.formal .informe-foto figcaption { margin-top: 4px; }
+.informe-botones { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.informe-botones .boton { flex: 1 1 200px; }
+.informe-editor { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--borde); border-radius: 12px; background: var(--tarjeta); }
+.informe-editor > summary { font-weight: 600; cursor: pointer; padding: 4px 0; }
+.informe-editor .etiqueta-campo { margin-top: 8px; }
+@media print {
+  #impresion .informe.formal { font-size: 11.5pt; }
+  #impresion .informe.formal h2 { break-after: avoid; }
+  #impresion .informe.formal h2.anexo { break-before: page; }
+  #impresion .informe-tabla-caja, #impresion .informe-figura, #impresion .informe-foto { break-inside: avoid; }
+  #impresion .informe-tabla thead { display: table-header-group; }
+}
+
+/* Versión 128, el informe con calidad de publicación: tablas con solo tres rayas (arriba, bajo la
+   cabecera y abajo, como en las revistas), figuras con paneles (a), (b)… y números de página */
+.informe.formal .informe-tabla { border-top: 1.5px solid #1b1c22; border-bottom: 1.5px solid #1b1c22; }
+.informe.formal .informe-tabla th, .informe.formal .informe-tabla td { border: 0; padding: 3px 8px; }
+.informe.formal .informe-tabla th { background: none; border-bottom: 1px solid #1b1c22; font-weight: 700; }
+.informe.formal .informe-tabla tbody tr:nth-child(even) td { background: #f6f7fb; }
+.informe.formal .informe-numero { font-weight: 400; font-variant-numeric: tabular-nums; }
+.informe.formal .informe-subfase { font-style: italic; margin: 6px 0 2px 22px; }
+.informe-tabla-caja.larga { break-inside: auto; }
+.informe-paneles { display: grid; gap: 6px; }
+.informe-panel { position: relative; }
+.informe-panel img { display: block; width: 100%; height: auto; max-height: 11cm; object-fit: contain; background: #f2f3f7; }
+.informe-paneles[style*="repeat(1"] .informe-panel img { max-height: 13cm; }
+.informe-letra { position: absolute; left: 4px; top: 4px; padding: 0 5px; background: #fff; color: #1b1c22; font-weight: 700; font-size: 13px; line-height: 1.4; border-radius: 3px; }
+/* El editor del informe (versión 137, «como en Word»): se escribe en la hoja misma. La hoja se ve limpia:
+   solo se marca el trozo que se toca (.seleccionado) y el texto que se escribe; una barra de herramientas
+   (arriba en el PC, abajo en el móvil) para lo elegido; los huecos para lo que falta; las fotos se
+   arrastran manteniendo pulsado. Nada de esto se imprime */
+.boton-cabecera { flex: none; border: 0; border-radius: 18px; padding: 7px 14px; font-size: 15px; font-weight: 600; background: rgba(255, 255, 255, .95); color: var(--color); }
+.boton-cabecera.secundario { background: rgba(255, 255, 255, .18); color: inherit; }
+.panel-cabecera .icono:disabled { opacity: .35; }
+.panel-informe .panel-cabecera h2 { min-width: 70px; }
+.panel-informe.editando-informe .panel-cabecera .icono { min-width: 36px; }
+.solo-pc { display: none; }
+.titulo-cambiable { cursor: pointer; }
+.informe.editando .escribible { outline: none; border-radius: 3px; cursor: text; transition: background .15s; }
+.informe.editando .escribible:hover { background: rgba(57, 73, 171, .06); }
+.informe.editando .escribible:focus { background: rgba(57, 73, 171, .09); box-shadow: 0 0 0 2px rgba(57, 73, 171, .35); }
+.informe.editando .escribible:empty::before { content: attr(data-pista); color: #9a9db0; font-style: italic; }
+.informe.editando span.escribible:empty { display: inline-block; min-width: 4em; }
+.informe.editando [data-i] { position: relative; }
+.informe.editando .seleccionado { box-shadow: -6px 0 0 -3px #3949ab; }
+.informe.editando .seleccionado.informe-portada, .informe.editando figure.seleccionado { box-shadow: 0 0 0 2px rgba(57, 73, 171, .25); border-radius: 4px; }
+.informe-prefijo { color: inherit; }
+.informe-hueco { color: #3949ab; font-style: italic; padding: 6px 10px; margin: 8px 0; border: 1.5px dashed #9fa8da; border-radius: 6px; background: #f5f6fc; cursor: pointer; }
+.informe-salto { break-before: page; page-break-before: always; }
+.informe.editando .informe-salto { margin: 14px 0; border-top: 1.5px dashed #9fa8da; text-align: center; height: 0; }
+.informe.editando .informe-salto span { position: relative; top: -10px; padding: 0 8px; background: #fff; color: #6b6f86; font-size: 12px; }
+/* (editando, lo de cada imagen se escribe debajo de ella: versión 145; en el papel va en el pie) */
+.informe.editando .informe-panel-texto { display: block; min-height: 1.4em; margin-top: 2px; padding: 2px 4px; font-size: 12px; line-height: 1.35; color: #44475a; background: #f6f7fb; border-radius: 4px; cursor: text; }
+.informe.editando span.informe-panel-texto:empty { display: block; }
+/* (las fotos se arrastran manteniendo pulsado: versión 135) */
+.informe.editando .informe-panel { cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.informe.editando .informe-panel.arrastrando { opacity: .55; outline: 3px solid #3949ab; outline-offset: 1px; z-index: 2; }
+.informe.editando .informe-paneles { min-height: 60px; }
+/* La barra de herramientas: en el móvil, abajo (por encima del teclado) */
+.editor-barra { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 10px calc(var(--abajo) + 8px); background: var(--tarjeta); border-top: 1px solid var(--borde); box-shadow: 0 -2px 10px rgba(0, 0, 0, .12); scrollbar-width: none; }
+.panel-informe.editando-informe .panel-cuerpo { padding-bottom: calc(var(--abajo) + 150px); }
+.barra-fila { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.barra-nombre { flex: none; font-weight: 700; font-size: 14px; color: var(--color); margin-right: 4px; white-space: nowrap; }
+.barra-pista { flex: 1 1 auto; min-width: 160px; font-size: 13px; color: var(--suave); }
+.herramienta { flex: none; border: 1px solid var(--borde); border-radius: 18px; padding: 7px 12px; background: var(--fondo); color: var(--texto); font-size: 14px; white-space: nowrap; }
+.herramienta:active { background: var(--color-suave); }
+.herramienta.peligro { color: var(--peligro); }
+/* El índice: solo en el PC */
+.informe-indice { display: none; }
+.indice-titulo { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--suave); margin: 0 0 8px 8px; }
+.indice-seccion { border-radius: 8px; }
+.indice-seccion.arrastrando { opacity: .6; background: var(--color-suave); }
+.indice-h1, .indice-h2, .indice-fig { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 5px 8px; border-radius: 6px; color: var(--texto); font-size: 14px; line-height: 1.3; }
+.indice-h1 { font-weight: 600; margin-top: 4px; }
+.indice-h2 { padding-left: 20px; color: var(--suave); font-size: 13px; }
+.indice-fig { padding-left: 20px; color: var(--suave); font-size: 12px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.indice-h1:hover, .indice-h2:hover, .indice-fig:hover { background: var(--color-suave); }
+/* (la sección por la que se va leyendo, versión 139) */
+.indice-h1.actual, .indice-h2.actual, .indice-fig.actual { background: var(--color-suave); color: var(--color); box-shadow: inset 3px 0 0 var(--color); }
+.barra-estado { flex: none; margin-left: auto; padding-left: 8px; font-size: 12px; color: var(--suave); white-space: nowrap; }
+.barra-estado:empty { display: none; }
+/* (la casilla «Corregir también en la bitácora», versión 140: marcada, en el color de la app; quitada, gris) */
+.casilla-fuera { white-space: normal; text-align: left; line-height: 1.3; }
+.casilla-fuera[aria-checked="true"] { background: var(--color-suave); color: var(--color); border-color: var(--color); font-weight: 600; }
+/* Correcciones del informe para aceptar en la bitácora (versión 143): como el control de cambios de Word */
+.propuestas { margin: 8px 0 14px; padding: 12px; border-radius: 12px; background: var(--aviso-fondo); color: var(--aviso-texto); border-left: 4px solid #f9a825; }
+.propuestas .nota { color: inherit; opacity: .85; }
+.propuestas-cabeza { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.propuesta { margin-top: 10px; padding: 10px; border-radius: 10px; background: var(--tarjeta); color: var(--texto); }
+.propuesta .nota { color: var(--suave); }
+.propuesta-cambio { margin: 6px 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.propuesta-cambio del { margin-right: 3px; color: var(--peligro); text-decoration: line-through; background: rgba(198, 40, 40, .08); }
+.propuesta-cambio ins { color: var(--ok); text-decoration: underline; background: rgba(46, 125, 50, .1); }
+.barra-solo { flex: none; font-size: 12px; color: var(--suave); white-space: nowrap; padding: 0 4px; }
+/* (al saltar desde el índice, que el título no quede debajo de la barra) */
+.informe [data-i] { scroll-margin-top: 90px; }
+.indice-pista { margin: 10px 8px 0; font-size: 12px; }
+/* Elegir fotos para una figura nueva */
+.elegir-fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 6px; max-height: 50vh; overflow-y: auto; margin: 8px 0; }
+.elegir-foto { position: relative; padding: 0; border: 3px solid transparent; border-radius: 8px; background: none; aspect-ratio: 1; overflow: hidden; }
+.elegir-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.elegir-foto[aria-pressed="true"] { border-color: var(--color); }
+.elegir-foto[aria-pressed="true"]::after { content: '✓'; position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 11px; background: var(--color); color: #fff; font-size: 14px; line-height: 22px; text-align: center; }
+@media print { .informe-hueco, .editor-barra, .informe-indice { display: none !important; } .informe-salto { border: 0 !important; height: 0 !important; margin: 0 !important; } .informe-salto span { display: none !important; } }
+/* Los informes guardados (versión 134): «nuevo / seguir / carpeta», la carpeta y los menús */
+.boton.grande { display: block; width: 100%; margin: 8px 0; padding: 14px; font-size: 16px; text-align: left; }
+.menu-opciones { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.menu-opciones .boton { width: 100%; text-align: left; }
+.informe-guardado { display: block; padding: 10px 12px; margin: 8px 0; }
+.informe-guardado-abrir { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; background: none; border: 0; padding: 4px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.corregir-tambien { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--aviso-fondo); color: var(--aviso-texto); }
+/* (la nota que se escribió al hacer las fotos, debajo de la figura: versión 132) */
+.informe.formal .informe-observaciones { white-space: pre-line; text-align: left; font-size: 13.5px; margin: 6px 0 4px; padding-left: 10px; border-left: 2px solid #c9ccd8; }
+.informe.formal .informe-arbol .arbol-caja { background: none; border: 0; border-radius: 0; padding: 0; }
+/* (el informe es una hoja blanca también en modo oscuro: los colores del árbol, siempre los claros; si
+   no, en el móvil con modo oscuro las filas salían gris oscuro y los nombres de las fases no se leían) */
+.informe.formal { --color-suave: #e8eaf6; --suave: #5b5e6e; --color: #3949ab; --borde: #c9ccd8; --tarjeta: #fff; --texto: #1b1c22; }
+/* (en la pantalla del móvil, una tabla ancha se desliza de lado en vez de cortarse; al imprimir, no) */
+.informe-hoja .informe-tabla-caja { overflow-x: auto; }
+@media print { #impresion .informe.formal h3, #impresion .informe.formal .informe-fase { break-after: avoid; } }
+.informe.formal .informe-arbol .arbol-nombre { font-family: "Times New Roman", Times, Georgia, serif; }
+@media print {
+  @page { @bottom-center { content: counter(page) " / " counter(pages); font-family: "Times New Roman", serif; font-size: 9pt; color: #555; } }
+  #impresion .informe-tabla-caja.larga { break-inside: auto; }
+  #impresion .informe-tabla tr { break-inside: avoid; }
+}
+
+/* (las fechas de las tablas, sin partir; y las cabeceras de tabla, sin guiones) */
+.informe.formal .informe-fecha-celda { white-space: nowrap; }
+.informe.formal .informe-tabla th, .informe.formal .informe-tabla td { hyphens: manual; }
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   EL PC (versión 136; el usuario: «mejórame muchísimo la interfaz en el PC»). En una pantalla de
+   1100 px o más (el navegador del PC, Química PC): una barra lateral siempre a la vista, el contenido
+   a lo ancho, la receta con Datos y Pasos lado a lado, el cuaderno con Muestras y Bitácora lado a
+   lado, rejillas de tarjetas y cosas de PC (pasar el ratón, Esc). En el móvil no cambia nada
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 1100px) {
+  :root { --lateral: 264px; --ancho: 1280px; }
+  body { padding-left: var(--lateral); font-size: 16px; }
+
+  /* ── La barra lateral ── */
+  #lateral { display: flex; flex-direction: column; gap: 6px; position: fixed; z-index: 12; left: 0; top: 0; bottom: 0; width: var(--lateral);
+    padding: 18px 14px 12px; background: linear-gradient(180deg, #283593 0%, #3949ab 100%); color: #fff; box-shadow: 1px 0 0 rgba(0, 0, 0, .08); }
+  .lateral-marca { display: flex; align-items: center; gap: 10px; padding: 2px 8px 14px; font-size: 22px; font-weight: 700; letter-spacing: .2px; }
+  .lateral-logo { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: rgba(255, 255, 255, .16); font-size: 22px; }
+  .lateral-nuevo { margin: 0 0 10px; padding: 12px 14px; border: 0; border-radius: 12px; background: #fff; color: #283593; font-weight: 700; font-size: 15px; text-align: left;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .18); transition: transform .12s, box-shadow .12s; }
+  .lateral-nuevo:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+  .lateral-menu { display: flex; flex-direction: column; gap: 2px; }
+  .lateral-menu button, .lateral-cuaderno { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 10px; background: none;
+    color: rgba(255, 255, 255, .86); text-align: left; transition: background .12s, color .12s; }
+  .lateral-menu button { padding: 10px 12px; font-size: 15px; }
+  .lateral-icono { width: 22px; text-align: center; }
+  .lateral-menu button:hover, .lateral-cuaderno:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+  .lateral-menu button.activo, .lateral-cuaderno.activo { background: rgba(255, 255, 255, .22); color: #fff; font-weight: 700; }
+  .lateral-titulo { margin: 16px 12px 4px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgba(255, 255, 255, .6); }
+  #lateral-cuadernos { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; scrollbar-width: thin; }
+  .lateral-cuaderno { flex-direction: column; align-items: flex-start; gap: 1px; padding: 8px 12px; }
+  .lateral-cuaderno-nombre { font-size: 14.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lateral-cuaderno small { font-size: 12px; color: rgba(255, 255, 255, .62); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+  .lateral-pie { padding: 8px 12px 0; font-size: 12px; color: rgba(255, 255, 255, .55); }
+
+  /* ── La cabecera de la pantalla principal: sin los iconos (están en la barra), clara ── */
+  .cabecera { padding: 20px max(32px, calc((100% - var(--ancho)) / 2)) 16px; background: var(--fondo); color: var(--texto); border-bottom: 1px solid var(--borde); }
+  .cabecera h1 { font-size: 26px; font-weight: 700; }
+  #b-recetas, #b-cuaderno, #b-calculadora, #b-ajustes, .flotante { display: none !important; }
+  #principal { padding: 20px max(32px, calc((100% - var(--ancho)) / 2)) 48px; }
+  #buscar, .buscar-todos { max-width: 640px; }
+
+  /* ── Rejillas de tarjetas: cuadernos y recetas ── */
+  .lista-cuadernos, #lista-recetas { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; margin-top: 16px; }
+  .lista-cuadernos > .tarjeta, #lista-recetas > .tarjeta { margin-top: 0; padding: 18px; min-height: 120px; }
+  .lista-cuadernos > #vacio-cuadernos { grid-column: 1 / -1; }
+
+  /* ── Pasar el ratón por encima ── */
+  .tarjeta { transition: border-color .12s, box-shadow .12s, transform .12s; }
+  .tarjeta:hover { border-color: #9fa8da; box-shadow: 0 6px 18px rgba(40, 53, 147, .10); }
+  .lista-cuadernos > .tarjeta:hover, #lista-recetas > .tarjeta:hover { transform: translateY(-2px); }
+  .boton, .chip, .pestana-receta, .icono { transition: filter .12s, background .12s, border-color .12s; }
+  .boton:hover:not(:disabled) { filter: brightness(1.07); }
+  .chip:hover { border-color: var(--color); }
+  .pestana-receta:hover { border-color: #9fa8da; }
+  .icono:hover { background: rgba(127, 127, 127, .15); }
+  :focus-visible { outline: 3px solid #7986cb; outline-offset: 2px; }
+
+  /* ── Los paneles (cuaderno, receta, grupo…): a la derecha de la barra, con cabecera clara ── */
+  .panel { left: var(--lateral); box-shadow: -1px 0 0 var(--borde); }
+  .panel-cabecera { padding: 14px max(24px, calc((100% - var(--ancho)) / 2)); background: var(--tarjeta); color: var(--texto); border-bottom: 1px solid var(--borde); }
+  .panel-cabecera h2 { font-size: 22px; font-weight: 700; }
+  .panel-cabecera .icono { color: var(--color); }
+  .panel-cuerpo { width: 100%; max-width: none; margin: 0; padding: 20px max(32px, calc((100% - var(--ancho)) / 2)) 48px; }
+  .panel-cuerpo h3 { font-size: 18px; }
+  .pestana-notas { top: 120px; }
+
+  /* ── La receta: Datos a la izquierda y Pasos a la derecha, a la vez (sin pestañas) ── */
+  .panel-cuerpo:has(> .pestanas-receta:not(.pestanas-cuaderno)) { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); column-gap: 32px; align-content: start; align-items: start; }
+  .panel-cuerpo:has(> .pestanas-receta:not(.pestanas-cuaderno)) > * { grid-column: 1 / -1; }
+  .panel-cuerpo > .pestanas-receta:not(.pestanas-cuaderno) { display: none; }
+  .panel-cuerpo > .pagina-receta:not(.pagina-cuaderno), .panel-cuerpo > .pagina-receta:not(.pagina-cuaderno)[hidden] { display: block !important; grid-column: auto; animation: none; transform: none !important; opacity: 1 !important; }
+  /* (la columna de los pasos, con su fondo, para que se vea dónde empieza) */
+  .panel-cuerpo > .pagina-receta[data-pagina="pasos"]:not(.pagina-cuaderno) { padding: 4px 16px 16px; border: 1px solid var(--borde); border-radius: 16px; background: var(--tarjeta); }
+
+  /* ── Un grupo: arriba y «Más» a la izquierda, su historia a la derecha ── */
+  .panel-cuerpo.cuerpo-grupo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); grid-template-areas: "arriba historia" "mas historia"; column-gap: 28px; align-content: start; align-items: start; }
+  .cuerpo-grupo > .grupo-arriba { grid-area: arriba; }
+  .cuerpo-grupo > .grupo-historia { grid-area: historia; padding: 4px 16px 16px; border: 1px solid var(--borde); border-radius: 16px; background: var(--tarjeta); }
+  .cuerpo-grupo > .grupo-mas { grid-area: mas; }
+
+  /* ── El cuaderno: Muestras a la izquierda y la Bitácora a la derecha (con su propia barra); Fotos, en su pestaña ── */
+  .panel-cuerpo:has(> .pestanas-cuaderno) { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(340px, 1fr); column-gap: 28px; align-content: start; align-items: start; grid-auto-flow: row dense; }
+  .panel-cuerpo:has(> .pestanas-cuaderno) > * { grid-column: 1 / -1; }
+  .panel-cuerpo:has(> .pestanas-cuaderno) > .pagina-cuaderno[data-pagina="muestras"],
+  .panel-cuerpo:has(> .pestanas-cuaderno) > .pagina-cuaderno[data-pagina="muestras"][hidden] { display: block !important; grid-column: 1; animation: none; transform: none !important; opacity: 1 !important; }
+  .panel-cuerpo:has(> .pestanas-cuaderno) > .pagina-cuaderno[data-pagina="bitacora"],
+  .panel-cuerpo:has(> .pestanas-cuaderno) > .pagina-cuaderno[data-pagina="bitacora"][hidden] { display: block !important; grid-column: 2; position: sticky; top: 64px; max-height: calc(100vh - 150px); overflow-y: auto;
+    padding: 4px 14px 14px; border: 1px solid var(--borde); border-radius: 16px; background: var(--tarjeta); animation: none; transform: none !important; opacity: 1 !important; scrollbar-width: thin; }
+  .panel-cuerpo:has(> .pestanas-cuaderno) > .pagina-cuaderno[data-pagina="fotos"] { grid-column: 1 / -1; }
+  /* (con Fotos elegida, solo las fotos) */
+  .panel-cuerpo:has(.pestana-cuaderno[data-pagina="fotos"][aria-pressed="true"]) > .pagina-cuaderno:not([data-pagina="fotos"]) { display: none !important; }
+  /* (las pestañas: «Muestras y bitácora» | «Fotos») */
+  .pestanas-cuaderno > .pestana-cuaderno[data-pagina="bitacora"] { display: none; }
+  .pestanas-cuaderno > .pestana-cuaderno[data-pagina="muestras"]::after { content: ' y 📖 Bitácora'; }
+  .panel-cuerpo:has(.pestana-cuaderno[data-pagina="bitacora"][aria-pressed="true"]) .pestana-cuaderno[data-pagina="muestras"] { border-color: var(--color); background: var(--color-suave); color: var(--color); }
+  .pestanas-receta { top: -20px; margin: -20px 0 16px; padding: 12px 0; }
+  .pestanas-cuaderno { margin-top: 12px; }
+  .pestanas-cuaderno .pestana-receta { font-size: 15px; padding: 12px 8px; }
+  .cuaderno-este { padding: 14px 16px; }
+  .cuaderno-este .carpeta-titulo b { font-size: 24px; }
+
+  /* (el árbol del cuaderno, encogido si hace falta para que quepa entero en su columna) */
+  .pagina-cuaderno .arbol-caja svg { max-width: 100%; height: auto; }
+
+  /* ── Fotos, más por fila ── */
+  .galeria { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+
+  /* ── Ajustes y calculadora: una columna cómoda, centrada ── */
+  .panel[data-lateral="ajustes"] .panel-cuerpo, .panel[data-lateral="calculadora"] .panel-cuerpo { max-width: 980px; margin: 0 auto; padding-left: 32px; padding-right: 32px; }
+
+  /* ── El informe: una hoja de papel centrada ── */
+  .informe-hoja { max-width: 900px; margin: 16px auto 0; padding: 48px 56px; }
+  .informe-botones { max-width: 900px; margin-left: auto; margin-right: auto; }
+  .solo-pc { display: inline-block; }
+  /* (el editor: la barra arriba, pegada; el índice a la izquierda de la hoja) */
+  .editor-barra { position: sticky; top: 0; left: auto; right: auto; bottom: auto; max-width: 1180px; margin: 0 auto; flex-wrap: wrap; border: 0; border-radius: 12px; padding: 8px 12px; background: transparent; box-shadow: none; overflow: visible; }
+  /* (detrás de la barra, una franja del color del fondo, de lado a lado y hasta arriba: así el informe que pasa
+     por debajo no se ve por encima ni por las esquinas; y encima, la tarjeta de la barra) */
+  .editor-barra::before { content: ''; position: absolute; left: -100vw; right: -100vw; top: -40px; bottom: -10px; background: var(--fondo); z-index: -2; }
+  .editor-barra::after { content: ''; position: absolute; inset: 0; border: 1px solid var(--borde); border-radius: 12px; background: var(--tarjeta); box-shadow: 0 2px 10px rgba(0, 0, 0, .08); z-index: -1; }
+  .panel-informe.editando-informe .panel-cuerpo { padding-bottom: 40px; }
+  .editor-barra { flex-direction: row; align-items: center; }
+  .barra-fila { display: contents; }
+  .barra-fila > * { order: 2; }
+  .barra-fila > .barra-nombre { order: 0; }
+  .casilla-fuera, .barra-solo { order: 1; white-space: nowrap; }
+  .barra-estado { order: 3 !important; }
+  /* (la hoja, en el centro del panel: el índice va en el hueco de su izquierda y a la derecha queda otro igual;
+     versión 146, lo pidió el usuario: «en el PC, que el informe esté centrado») */
+  /* (versión 147, lo pidió: «me has acortado el índice; muévelo un poco a la izquierda»: el índice con su ancho de
+     siempre, 250 px; si su hueco es más estrecho, se sale hacia la izquierda, por el margen del panel) */
+  .informe-con-indice { display: grid; grid-template-columns: minmax(222px, 1fr) minmax(0, 900px) minmax(222px, 1fr); gap: 16px; align-items: start; }
+  .informe-con-indice .informe-hoja { margin: 16px 0 0; }
+  /* (sin editar no hay barra encima: el índice, a la altura de la hoja) */
+  .panel-informe:not(.editando-informe) .informe-indice { top: 16px; }
+  .informe-indice { display: block; justify-self: end; width: 250px; position: sticky; top: 70px; max-height: calc(100vh - 160px); overflow-y: auto; margin-top: 16px; padding: 12px 6px; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 12px; }
+  .panel-cabecera .boton-cabecera { background: var(--color); color: #fff; }
+  .panel-cabecera .boton-cabecera.secundario { background: var(--color-suave); color: var(--color); }
+
+  /* ── Las preguntas y el aviso de abajo ── */
+  .dialogo { max-width: 560px; padding: 24px; }
+  #aviso { left: calc(var(--lateral) + (100% - var(--lateral)) / 2); right: auto; width: 600px; transform: translateX(-50%); bottom: 24px; }
+}
+/* (en un PC de pantalla más pequeña, el índice y la hoja juntos y centrados los dos: si no, para dejar el
+   mismo hueco a la derecha, la hoja quedaba demasiado estrecha) */
+@media (min-width: 1100px) and (max-width: 1439px) {
+  .informe-con-indice { grid-template-columns: 250px minmax(0, 900px); justify-content: center; }
+}
+@media (min-width: 1100px) and (prefers-color-scheme: dark) {
+  #lateral { background: linear-gradient(180deg, #171a33 0%, #1f2340 100%); box-shadow: 1px 0 0 var(--borde); }
+  .lateral-nuevo { background: #9fa8da; color: #14183a; }
+}

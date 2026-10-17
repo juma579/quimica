@@ -43,12 +43,14 @@
 //   comparar: { recetaId: [idFoto…] }              las fotos elegidas para comparar, en su orden
 //   albumes: [{ id, recetaId, cuadernoId?, nombre, nota, fotos: [idFoto], fecha }]   grupos de fotos hechos
 //     a mano (colección «albumes»: pasa al PC)
+//   informes: [{ id, recetaId, cuadernoId?, nombre, fecha, mod, bloques, cuadernos }]   informes guardados
+//     (versión 134: se hace uno estándar con los datos y luego se edita a gusto; colección «informes»)
 // }
 // Las fases son los rótulos de los pasos (Quimica.tramosFases); sin rótulos, fase null = toda la receta.
 (function (raiz) {
   'use strict';
 
-  const vacio = () => ({ grupos: [], entradas: [], disoluciones: [], carpetas: [], cuadernos: [], albumes: [], titulos: {}, comparar: {} });
+  const vacio = () => ({ grupos: [], entradas: [], disoluciones: [], carpetas: [], cuadernos: [], albumes: [], informes: [], titulos: {}, comparar: {} });
   const objeto = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
   const limpiar = (c) => ({
     grupos: Array.isArray(c && c.grupos) ? c.grupos.filter((g) => g && g.id) : [],
@@ -57,6 +59,7 @@
     carpetas: Array.isArray(c && c.carpetas) ? c.carpetas.filter((d) => d && d.id) : [],
     cuadernos: Array.isArray(c && c.cuadernos) ? c.cuadernos.filter((d) => d && d.id) : [],
     albumes: Array.isArray(c && c.albumes) ? c.albumes.filter((d) => d && d.id) : [],
+    informes: Array.isArray(c && c.informes) ? c.informes.filter((d) => d && d.id) : [],
     titulos: objeto(c && c.titulos),
     comparar: objeto(c && c.comparar),
   });
@@ -487,6 +490,8 @@
   // Los álbumes de fotos de un cuaderno (lo pidió el usuario: hacer grupos con sus fotos), por orden
   // de creación. { id, recetaId, cuadernoId?, nombre, fotos: [idFoto], fecha }
   const albumesDe = (c, recetaId) => c.albumes.filter((a) => casa(a, recetaId)).sort((a, b) => (a.fecha || 0) - (b.fecha || 0));
+  // Los informes guardados de un cuaderno, el último que se cambió primero
+  const informesDe = (c, amb) => (c.informes || []).filter((x) => casa(x, amb)).sort((a, b) => (b.mod || b.fecha || 0) - (a.mod || a.fecha || 0));
   // De qué tipo es lo que se apuntó con unas fotos, para filtrarlas: 'analisis' (microscopio…),
   // 'disoluciones' (prepararla, su estado o una nota suya), 'notas' o 'fases' (empezar, terminar,
   // separar, juntar)
@@ -547,9 +552,26 @@
     .filter(Boolean)
     .sort((a, b) => a.dias - b.dias);
 
-  const Cuaderno = { vacio, limpiar, grupoDe, gruposDe, ordenarGrupos, mismoSitio, juntar, pasar, deshacerPasar, historiaAnterior, faseDeEntrada, medidasDe, nombresDeMedidas, unidadDeMedida, numTexto, lineasDeMedidas, principal, cuadernoDe, ambito, casa, marcaDe, claveComparar, cuadernosDe, fichaCuaderno, todosLosCuadernos, carpetasDe, gruposEnCarpeta, colocarGrupos, historiaDe, estadoDe, yaHizo, faseParaEmpezar, faseParaTerminar, nombreFase, titularDe, separar,
+  // Cambia una foto por otra en todo el cuaderno (versión 126: poner la original, con más resolución,
+  // en lugar de una guardada reducida): en sus apuntes (fotos, aumento y zona, apartado, comparadas),
+  // su título, los álbumes, las comparaciones y la foto de un cuaderno. Cambia c y lo devuelve
+  const cambiarIdFoto = (c, viejo, nuevo) => {
+    const cambiar = (lista) => (Array.isArray(lista) ? lista.map((x) => (x === viejo ? nuevo : x)) : lista);
+    for (const e of c.entradas) {
+      if (e.fotos) e.fotos = cambiar(e.fotos);
+      if (e.comparadas) e.comparadas = cambiar(e.comparadas);
+      if (e.fotosInfo && e.fotosInfo[viejo]) { e.fotosInfo[nuevo] = e.fotosInfo[viejo]; delete e.fotosInfo[viejo]; }
+    }
+    if (c.titulos && c.titulos[viejo]) { c.titulos[nuevo] = c.titulos[viejo]; delete c.titulos[viejo]; }
+    for (const a of c.albumes) a.fotos = cambiar(a.fotos);
+    for (const k of Object.keys(c.comparar || {})) c.comparar[k] = cambiar(c.comparar[k]);
+    for (const k of c.cuadernos) if (k.foto === viejo) k.foto = nuevo;
+    return c;
+  };
+
+  const Cuaderno = { vacio, limpiar, cambiarIdFoto, grupoDe, gruposDe, ordenarGrupos, mismoSitio, juntar, pasar, deshacerPasar, historiaAnterior, faseDeEntrada, medidasDe, nombresDeMedidas, unidadDeMedida, numTexto, lineasDeMedidas, principal, cuadernoDe, ambito, casa, marcaDe, claveComparar, cuadernosDe, fichaCuaderno, todosLosCuadernos, carpetasDe, gruposEnCarpeta, colocarGrupos, historiaDe, estadoDe, yaHizo, faseParaEmpezar, faseParaTerminar, nombreFase, titularDe, separar,
     buscar, textoDeEntrada, avisosToca, diasHasta,
-    fotosDe, tituloFoto, comparadas, olvidarFotos, infoFoto, apartadosDe, momentoDe, albumesDe, tipoFoto,
+    fotosDe, tituloFoto, comparadas, olvidarFotos, infoFoto, apartadosDe, momentoDe, albumesDe, informesDe, tipoFoto,
     ESTADOS, disolucionDe, disolucionesDe, disponible, sugeridas, historiaDisolucion, usadaPor, nombreDisolucion };
   if (typeof module !== 'undefined' && module.exports) module.exports = Cuaderno;
   else raiz.Cuaderno = Cuaderno;
