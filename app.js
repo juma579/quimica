@@ -1113,6 +1113,7 @@
     // vuelven a pintar, para no quitarle el teclado al usuario mientras escribe
     let filasResultado = new Map(); // id de cada cantidad → su fila de resultado
     let avisosSentido = new Map(); // id de cada dato → su aviso de sentido común
+    let entradasDato = new Map(); // id de cada dato → su casilla en Datos (para ponerle lo escrito en un paso)
     let resumenSentido = null; // arriba: "⚠️ 1 número no cuadra"
     let cajaPasos;
     let botonInicio;
@@ -1191,7 +1192,10 @@
           h('button', { 'aria-label': 'Un ciclo menos', text: '−', disabled: n === 0, onclick: () => cambiar(n - 1) }),
           h('button', { 'aria-label': 'Un ciclo más', text: '＋', onclick: () => cambiar(n + 1) }));
       };
-      botonEmpezar.hidden = !marcados.length && !Object.keys(ciclos).length;
+      const hayApuntados = receta.datos.some((d) => d.enPaso && d.valor != null);
+      botonEmpezar.hidden = !marcados.length && !Object.keys(ciclos).length && !hayApuntados;
+      botonEmpezar.textContent = hayApuntados ? '↺ Empezar de nuevo: desmarcar los pasos, ciclos a 0 y vaciar lo apuntado'
+        : '↺ Empezar de nuevo: desmarcar los pasos y poner los ciclos a 0';
       // Al final de cada fase, el botón para apuntarla en el cuaderno. Si la fase tiene subfases, uno
       // al final de cada subfase: «🧪 Disolución preparada» o «🏁 Muestras terminadas»
       const finDeFase = new Map();
@@ -1207,15 +1211,61 @@
         text: sub.parte === 'disolucion' ? `🧪 Disolución preparada: ${sub.nombre}` : `🏁 Muestras terminadas: ${sub.nombre}`,
         onclick: () => terminarFase(receta, tramo, sub) });
       const rotuloSub = (s) => h('div', { class: `subfase parte-${s.parte}`, text: `${s.parte === 'disolucion' ? '🧪' : '🧫'} ${s.nombre}` });
-      poner(cajaPasos, receta.pasos.map((p, i) => {
+      // Los datos en el texto de un paso: los que se apuntan al hacer la receta (enPaso), una casilla
+      // para escribirlos; los demás, su número (al tocarlo, qué es)
+      const valorEnCasilla = (d) => (d.valor == null ? '' : String(d.valor).replace('.', ','));
+      const casillaEnPaso = (d) => {
+        const ent = h('input', { class: `en-paso${d.valor == null ? ' falta' : ''}`, type: 'text', inputmode: 'decimal', autocomplete: 'off',
+          'aria-label': d.nombre, placeholder: '?', 'data-en-paso': d.id, value: valorEnCasilla(d) });
+        const ancho = () => { ent.size = Math.max(3, ent.value.length + 1); };
+        ancho();
+        ent.addEventListener('input', () => {
+          const dd = receta.datos.find((x) => x.id === d.id);
+          if (!dd) return;
+          dd.valor = Q.aNumero(ent.value);
+          ent.classList.toggle('falta', dd.valor == null);
+          ancho();
+          guardarRecetas();
+          pintarCalculado();
+        });
+        ent.addEventListener('focus', () => ent.select());
+        return h('span', { class: 'cant-en-paso' }, ent, d.unidad && h('span', { class: 'en-paso-unidad', text: ` ${d.unidad}` }));
+      };
+      const cantidadEnPaso = (t) => h('span', { class: `cant${t.error ? ' error' : ''}`, 'data-cant': t.id, text: t.texto, onclick: () => {
+        const x = Q.trozosPaso(`{${t.id}}`, receta, Q.calcular(receta))[0];
+        avisar(x.error || `${x.nombre}: ${x.texto}`);
+      } });
+      // Lo escrito en un paso, también en su casilla de Datos (si no se está escribiendo en ella)
+      for (const [idDato, el] of entradasDato) {
+        const d = receta.datos.find((x) => x.id === idDato);
+        if (!d || !d.enPaso || el === document.activeElement) continue;
+        if (Q.aNumero(el.value) !== d.valor) el.value = valorEnCasilla(d);
+        el.classList.toggle('falta', d.valor == null);
+      }
+      // Mientras se escribe en una casilla de un paso no se vuelven a pintar los pasos (se iría el
+      // teclado): solo cambian los números y las otras casillas del mismo dato
+      const activo = document.activeElement;
+      if (activo && activo.matches && activo.matches('input.en-paso') && cajaPasos.contains(activo)) {
+        for (const el of cajaPasos.querySelectorAll('[data-cant]')) {
+          const x = Q.trozosPaso(`{${el.dataset.cant}}`, receta, res)[0];
+          el.textContent = x.texto;
+          el.classList.toggle('error', Boolean(x.error));
+        }
+        for (const el of cajaPasos.querySelectorAll('input.en-paso')) {
+          const d = receta.datos.find((x) => x.id === el.dataset.enPaso);
+          if (el !== activo && d) { el.value = valorEnCasilla(d); el.classList.toggle('falta', d.valor == null); }
+        }
+      } else poner(cajaPasos, receta.pasos.map((p, i) => {
         const enMarcha = cronometros.find((c) => c.recetaId === id && c.paso === i + 1);
         return [p.titulo && h('div', { class: 'fase', 'data-fase': String(i), text: p.titulo }), empiezaSub.has(i) && rotuloSub(empiezaSub.get(i)), h('div', { class: `paso${marcados.includes(i) ? ' hecho' : ''}`, 'data-paso': String(i) },
           h('button', { class: 'paso-numero', 'aria-label': `Marcar el paso ${i + 1}`, text: marcados.includes(i) ? '✓' : String(i + 1),
             onclick: () => { const m = hechos(); ponerHechos(m.includes(i) ? m.filter((x) => x !== i) : [...m, i]); pintarCalculado(); } }),
           h('div', { class: 'paso-contenido' },
-            h('div', { class: 'paso-texto' }, Q.trozosPaso(p.texto, receta, res).map((t) => (t.id
-              ? h('span', { class: `cant${t.error ? ' error' : ''}`, text: t.texto, onclick: () => avisar(t.error || `${t.nombre}: ${t.texto}`) })
-              : t.texto))),
+            h('div', { class: 'paso-texto' }, Q.trozosPaso(p.texto, receta, res).map((t) => {
+              if (!t.id) return t.texto;
+              const d = receta.datos.find((x) => x.id === t.id);
+              return d && d.enPaso ? casillaEnPaso(d) : cantidadEnPaso(t);
+            })),
             p.ciclos && contador(p, i),
             p.minutos && (enMarcha
               ? h('button', { class: 'crono-boton en-marcha', onclick: () => cancelarCronometro(enMarcha.id) },
@@ -1239,7 +1289,11 @@
       const pintarNota = () => {
         alDia();
         entrada.classList.toggle('falta', d.valor == null);
-        if (!d.formula) { nota.replaceChildren(d.valor == null ? 'Escribe el valor' : ''); return; }
+        if (!d.formula) {
+          const paso = d.enPaso ? receta.pasos.findIndex((p) => new RegExp(`\\{\\s*${d.id}\\s*\\}`).test(p.texto || '')) : -1;
+          nota.replaceChildren(paso >= 0 ? `📝 Se apunta en el paso ${paso + 1}` : d.valor == null ? 'Escribe el valor' : '');
+          return;
+        }
         const pm = esPM ? Q.masaMolar(d.formula) : null;
         if (esPM && d.manual && pm !== null) {
           nota.replaceChildren(`${d.formula} · escrito a mano `, h('button', { text: `↺ calculado: ${Q.numero(pm)}`, onclick: () => {
@@ -1267,6 +1321,7 @@
       // El aviso de sentido común de este dato (lo rellena pintarCalculado, que sí se repinta al escribir)
       const avisoSentido = h('small', { class: 'aviso-sentido', hidden: true });
       avisosSentido.set(d.id, avisoSentido);
+      entradasDato.set(d.id, entrada);
       return h('div', { class: 'dato', 'data-dato': d.id }, h('div', { class: 'dato-nombre' }, letra && simbolo(letra), d.nombre, nota, extra === undefined ? usosDe(d) : extra, avisoSentido),
         entrada, h('span', { class: 'dato-unidad', text: d.unidad }));
     };
@@ -1322,6 +1377,7 @@
       titulo.textContent = receta.nombre;
       filasResultado = new Map();
       avisosSentido = new Map();
+      entradasDato = new Map();
       resumenSentido = h('div', { class: 'avisos', hidden: true });
       cajaPasos = h('div', { class: 'caja' });
       botonInicio = h('button', { class: 'boton secundario', text: '↺ Volver a los valores del principio', onclick: () => {
@@ -1333,6 +1389,15 @@
       botonEmpezar = h('button', { class: 'boton secundario', hidden: true, text: '↺ Empezar de nuevo: desmarcar los pasos y poner los ciclos a 0', onclick: () => {
         ponerHechos([]);
         borrarCiclos(id);
+        // (versión 154, lo pidió el usuario) y se vacía lo apuntado al hacerla (lo que pesó la base…):
+        // la próxima vez se pesa otra cosa
+        const apuntados = receta.datos.filter((d) => d.enPaso && d.valor != null);
+        if (apuntados.length) {
+          const antes = apuntados.map((d) => `${d.nombre} (era ${Q.numero(d.valor)}${d.unidad ? ` ${d.unidad}` : ''})`).join(', ');
+          for (const d of apuntados) d.valor = null;
+          guardarRecetas();
+          avisar(`Vaciado: ${antes}`);
+        }
         pintarCalculado();
       } });
       const peticion = h('textarea', { class: 'campo', rows: 3, placeholder: 'Por ejemplo: «calcula también cuánto HCl 37 % hace falta para neutralizarlo» o «añade un paso para medir el pH»' });
@@ -1551,7 +1616,11 @@
         h('span'),
         esPM && campo({ class: 'campo ancho', placeholder: 'Fórmula química (NaCl)', value: d.formula || '',
           oninput: (e) => { d.formula = e.target.value.trim(); }, onchange: () => repintarFila() }),
-        nota);
+        nota,
+        // (versión 151) Lo que no se sabe hasta hacer la receta (lo que pesó la base): se escribe en su paso
+        h('label', { class: 'todo casilla-en-paso' },
+          h('input', { type: 'checkbox', checked: Boolean(d.enPaso), onchange: (e) => { d.enPaso = e.target.checked; } }),
+          ' 📝 Se apunta al hacerlo: en sus pasos sale una casilla para escribirlo'));
       return fila;
     };
     const pintarDatos = () => poner(cajaDatos, r.datos.map(filaDato));
@@ -1575,7 +1644,7 @@
       c.tipo = tipo;
       c.args = {};
       for (const rol of Object.keys(Q.TIPOS[tipo].huecos)) if (antes[rol]) c.args[rol] = antes[rol];
-      const salidas = Q.unidadesResultado(tipo, (porId(c.args.total) || {}).unidad);
+      const salidas = Q.unidadesResultado(tipo, (porId(c.args[Q.TIPOS[tipo].saleComo]) || {}).unidad);
       if (!salidas.includes(c.unidad)) c.unidad = salidas[0];
     };
     const cambiarFormula = async (c) => {
@@ -1819,7 +1888,7 @@
       }
       const f = Q.fichaFormula(c.tipo);
       c.args = c.args || {};
-      const salidas = Q.unidadesResultado(c.tipo, (porId(c.args.total) || {}).unidad);
+      const salidas = Q.unidadesResultado(c.tipo, (porId(c.args[Q.TIPOS[c.tipo].saleComo]) || {}).unidad);
       if (!salidas.includes(c.unidad)) c.unidad = salidas[0];
       const unidad = h('select', { 'aria-label': `Unidad del resultado de ${cual}`, 'data-plantilla': 'Unidad del resultado de %', onchange: (e) => { c.unidad = e.target.value; pintarResultados(); } },
         salidas.map((u) => h('option', { value: u, text: u })));
@@ -2001,7 +2070,7 @@
       textoOriginal: r.textoOriginal, modelo: r.modelo, avisos: [],
       // Un peso molecular cuenta como escrito a mano si ya lo era o si se ha cambiado el número aquí
       // (con el valor vacío lo vuelve a calcular la app)
-      datos: r.datos.map((d) => ({ id: d.id, nombre: d.nombre, valor: d._valor, unidad: d.unidad, formula: d.formula,
+      datos: r.datos.map((d) => ({ id: d.id, nombre: d.nombre, valor: d._valor, unidad: d.unidad, formula: d.formula, enPaso: Boolean(d.enPaso),
         manual: d._valor !== '' && (Boolean(d.manual) || d._valor !== d._valorAntes) })),
       calculos: r.calculos.map((c) => (Q.esFija(c)
         ? { id: c.id, nombre: c.nombre, unidad: c.unidad, tipo: c.tipo, args: c.args }
@@ -2231,7 +2300,7 @@
       }
       const ficha = Q.fichaFormula(estado.tipo);
       const id = Q.idNuevo(ficha.corto, usados);
-      const total = datos.find((x) => x.id === args.total);
+      const total = datos.find((x) => x.id === args[Q.TIPOS[estado.tipo].saleComo]);
       calculos.push({ id, nombre: ficha.corto, unidad: Q.unidadesResultado(estado.tipo, total && total.unidad)[0], tipo: estado.tipo, args });
       pasos.push({ texto: `${ficha.icono} ${ficha.corto}: {${id}}` });
       return { nombre: Q.TIPOS[estado.tipo].nombre, datos, calculos, pasos };

@@ -333,6 +333,18 @@
     volumen_moles: { nombre: 'Volumen de disolución que lleva unos moles', sale: ['volumen'],
       huecos: { moles: ['moles'], eq: ['numero', '?'], c: ['molar'] },
       cuenta: (a) => `${a.moles}${op('*', a.eq)} / ${a.c}` },
+    // (versión 152, lo pidió el usuario con su silicona: «5 de catalizador por cada 100 de base») Solo
+    // de la app (soloApp): no se le ofrecen a Gemini, para no cambiar lo que se le pide (ver www/ia.js)
+    proporcion: { nombre: 'En proporción con otra cantidad', sale: ['masa', 'volumen', 'moles'], saleComo: 'ref', soloApp: true,
+      huecos: { ref: ['masa', 'volumen', 'moles'], p_ref: ['numero'], p: ['numero'] },
+      cuenta: (a) => `${a.ref} * ${a.p} / ${a.p_ref}` },
+    porcentaje_de: { nombre: 'Un porcentaje de otra cantidad', sale: ['masa', 'volumen', 'moles'], saleComo: 'total', soloApp: true,
+      huecos: { total: ['masa', 'volumen', 'moles'], w: ['porcentaje'] },
+      cuenta: (a) => `${a.total} * ${a.w}` },
+    suma: { nombre: 'Suma de cantidades', sale: ['masa', 'volumen', 'moles'], saleComo: 's1', soloApp: true,
+      mismaClase: ['s1', 's2', 's3', 's4'], mismaClaseAviso: 'todas las cantidades que se suman tienen que ser del mismo tipo (todas masas, o todas volúmenes, o todas moles)',
+      huecos: { s1: ['masa', 'volumen', 'moles'], s2: ['masa', 'volumen', 'moles'], s3: ['masa', 'volumen', 'moles', '?'], s4: ['masa', 'volumen', 'moles', '?'] },
+      cuenta: (a) => `${a.s1} + ${a.s2}${op('+', a.s3)}${op('+', a.s4)}` },
   };
 
   const esFija = (c) => Boolean(c && c.tipo && Object.prototype.hasOwnProperty.call(TIPOS, c.tipo));
@@ -376,8 +388,9 @@
       clases[rol] = h.clase;
       args[rol] = id;
     }
-    if (tipo.mismaClase && clases[tipo.mismaClase[0]] !== clases[tipo.mismaClase[1]]) {
-      return { error: `«${c.nombre}»: las dos concentraciones tienen que ir en el mismo tipo de unidad (las dos en M, o las dos en g/L, o las dos en %)` };
+    // (los huecos que se dejan vacíos, como el tercero de una suma, no cuentan)
+    if (tipo.mismaClase && new Set(tipo.mismaClase.filter((rol) => rol in clases).map((rol) => clases[rol])).size > 1) {
+      return { error: `«${c.nombre}»: ${tipo.mismaClaseAviso || 'las dos concentraciones tienen que ir en el mismo tipo de unidad (las dos en M, o las dos en g/L, o las dos en %)'}` };
     }
     if (c.tipo === 'parte' && !args.partes.includes(args.parte)) return { error: `«${c.nombre}»: su parte tiene que ser una de las partes de la proporción` };
     const sale = tipo.saleComo ? [clases[tipo.saleComo]] : tipo.sale;
@@ -404,7 +417,7 @@
     for (const [rol, v] of Object.entries(textos)) marcas[rol] = Array.isArray(v) ? v.map((_, i) => `§${rol}:${i}§`) : `§${rol}§`;
     return marcas;
   };
-  const conTextos = (s, textos) => s.replace(/§([a-z_]+)(?::(\d+))?§/g, (todo, rol, i) => String(i === undefined ? textos[rol] : textos[rol][Number(i)]));
+  const conTextos = (s, textos) => s.replace(/§([a-z0-9_]+)(?::(\d+))?§/g, (todo, rol, i) => String(i === undefined ? textos[rol] : textos[rol][Number(i)]));
   const fraccionDe = (tipo, textos) => {
     const [arriba, ...abajo] = TIPOS[tipo].cuenta(marcasDe(textos)).replace(/ [*/] 1000/g, '').split(' / ');
     const escribir = (s) => conTextos(s.replace(/^\((.*)\)$/, '$1').replace(/ \* /g, ' × '), textos);
@@ -488,6 +501,15 @@
     volumen_moles: { icono: '💧', corto: 'Volumen con unos moles', color: 'diluir', sale: 'V',
       que: 'Qué volumen de una disolución lleva esos moles.',
       simbolos: { moles: 'n', eq: 'eq', c: 'c' } },
+    proporcion: { icono: '⚖️', corto: 'En proporción', color: 'repartir', sale: 'm₂',
+      que: 'Cuánto va de un componente por cada tanto de otro (por ejemplo, 5 g de catalizador por cada 100 g de base).',
+      simbolos: { ref: 'm₁', p_ref: 'p₁', p: 'p₂' } },
+    porcentaje_de: { icono: '📊', corto: 'Porcentaje de', color: 'pesar', sale: 'mᵢ',
+      que: 'Cuánto es un porcentaje de otra cantidad (por ejemplo, el 30 % en masa de una mezcla de 60 g).',
+      simbolos: { total: 'm', w: 'w' } },
+    suma: { icono: '➕', corto: 'Sumar', color: 'repartir', sale: 'Σ',
+      que: 'La suma de dos a cuatro cantidades del mismo tipo (por ejemplo, la masa total de una mezcla).',
+      simbolos: { s1: 'x₁', s2: 'x₂', s3: 'x₃', s4: 'x₄' } },
   };
 
   // ─── Para el editor de cantidades ───
@@ -883,6 +905,9 @@
     dilucion: { c: 'Concentración que quieres', v: 'Volumen que quieres' },
     moles_disolucion: { v: 'Volumen de disolución' },
     volumen_moles: { c: 'Concentración de la disolución' },
+    proporcion: { ref: 'Cantidad de referencia', p_ref: 'Partes de la referencia', p: 'Partes de esta' },
+    porcentaje_de: { total: 'Cantidad total', w: 'Porcentaje' },
+    suma: { s1: 'Primera cantidad', s2: 'Segunda cantidad', s3: 'Tercera cantidad (si hay)', s4: 'Cuarta cantidad (si hay)' },
   };
   // En qué unidad se da el resultado (luego la app la adapta sola: 0,0585 g → 58,5 mg)
   const UNIDAD_SALIDA = { masa: 'g', volumen: 'mL', molar: 'M', moles: 'mol' };
@@ -1143,6 +1168,9 @@
       const dato = { id: i.id, nombre: texto(d.nombre, 60) || i.id, valor: aNumero(d.valor), unidad: unidadLimpia(texto(d.unidad, 12)) };
       const formula = texto(d.formula, 40).replace(/\s+/g, '');
       if (formula) dato.formula = formula;
+      // (versión 151) Un dato que se apunta al hacer la receta (lo que pesó la base…): en sus pasos sale
+      // como una casilla para escribirlo
+      if (d.enPaso) dato.enPaso = true;
       if (esPesoMolecular(dato)) {
         const pm = masaMolar(formula);
         if (d.manual && dato.valor !== null) dato.manual = true;

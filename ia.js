@@ -31,8 +31,13 @@
   // A Gemini se le piden como una LISTA de parejas { hueco, dato }. Antes era una ficha con una
   // casilla por hueco (16 casillas), y Gemini de verdad solo rellenaba las dos primeras, dejaba
   // las demás vacías y metía varios id juntos en una ("v_tinta Sakamoto pureza_naddbs")
+  // (versión 152) Las fórmulas «solo de la app» (soloApp: proporción, porcentaje, suma) no se le
+  // ofrecen: así el esquema y las instrucciones que recibe Gemini son los mismos de antes (un cambio
+  // en lo que se le pide ha hecho que se bloquee otras veces)
+  const TIPOS_IA = Object.keys(Quimica.TIPOS).filter((t) => !Quimica.TIPOS[t].soloApp);
+  const paraIA = (c) => Quimica.esFija(c) && TIPOS_IA.includes(c.tipo);
   const HUECOS = [];
-  for (const tipo of Object.values(Quimica.TIPOS)) {
+  for (const tipo of TIPOS_IA.map((t) => Quimica.TIPOS[t])) {
     for (const rol of Object.keys(tipo.huecos)) if (!HUECOS.includes(rol)) HUECOS.push(rol);
   }
 
@@ -65,7 +70,7 @@
             id: { type: 'STRING' }, nombre: { type: 'STRING' }, unidad: { type: 'STRING' },
             // La cuenta no la escribe la IA: dice de qué tipo es (los de Quimica.TIPOS) y qué dato va
             // en cada hueco. Solo con "libre" escribe la cuenta, en expr
-            tipo: { type: 'STRING', enum: [...Object.keys(Quimica.TIPOS), 'libre'] },
+            tipo: { type: 'STRING', enum: [...TIPOS_IA, 'libre'] },
             huecos: {
               type: 'ARRAY', nullable: true,
               items: { type: 'OBJECT', properties: { hueco: { type: 'STRING', enum: HUECOS }, dato: { type: 'STRING' } }, required: ['hueco', 'dato'] },
@@ -230,7 +235,8 @@ Cómo montarlo:
         return { id: d.id, nombre: d.nombre, valor: esPM ? null : d.valor, unidad: d.unidad, formula: d.manual ? null : d.formula || null,
           origen: esPM ? 'formula' : d.valor == null ? 'falta' : 'texto' };
       }),
-      calculos: receta.calculos.map((c) => (Quimica.esFija(c)
+      // (las «solo de la app», como su cuenta escrita: Gemini no las conoce; ver devolverFijas)
+      calculos: receta.calculos.map((c) => (paraIA(c)
         ? { id: c.id, nombre: c.nombre, unidad: c.unidad, tipo: c.tipo, huecos: aParejas(c.args), expr: null, original: null }
         : { id: c.id, nombre: c.nombre, unidad: c.unidad, tipo: 'libre', huecos: null, expr: c.expr, original: null })),
       pasos: receta.pasos.map((p) => ({ titulo: p.titulo || null, texto: p.texto, minutos: p.minutos || null, ciclos: p.ciclos || null,
@@ -409,7 +415,31 @@ Cómo montarlo:
     const k = String(clave || '').trim();
     if (!k) return Promise.resolve({ error: 'Falta la clave de Gemini: ponla en ⚙️ Ajustes' });
     if (t.length < 5) return Promise.resolve({ error: 'Escribe qué quieres cambiar' });
-    return unaALaVez(() => generar(pedirCambio(receta, t.slice(0, 2000)), k, opciones, { id: receta.id, textoOriginal: receta.textoOriginal }, true));
+    return unaALaVez(() => generar(pedirCambio(receta, t.slice(0, 2000)), k, opciones, { id: receta.id, textoOriginal: receta.textoOriginal }, true))
+      .then((r) => (r && r.receta ? { ...r, receta: devolverFijas(r.receta, receta) } : r));
+  };
+  // Las fórmulas «solo de la app» se le mandan a Gemini como su cuenta escrita (libre). Si las devuelve
+  // igual (mismo id y misma cuenta), vuelven a ser de la app, sin el aviso de «fórmula escrita por la IA».
+  // Y los datos que se apuntan al hacer la receta (enPaso, versión 151) no se le mandan como tales:
+  // los que siguen ahí (mismo id) vuelven a llevar su marca
+  const sinEspacios = (s) => String(s || '').replace(/\s+/g, '');
+  const devolverFijas = (nueva, vieja) => {
+    let cambio = false;
+    for (const d of nueva.datos || []) {
+      const antes = (vieja.datos || []).find((x) => x.id === d.id);
+      if (antes && antes.enPaso && !d.enPaso) { d.enPaso = true; cambio = true; }
+    }
+    for (const c of nueva.calculos || []) {
+      const antes = (vieja.calculos || []).find((x) => x.id === c.id);
+      if (!antes || !Quimica.esFija(antes) || paraIA(antes) || Quimica.esFija(c) || sinEspacios(c.expr) !== sinEspacios(antes.expr)) continue;
+      nueva.avisos = (nueva.avisos || []).filter((a) => !a.startsWith(`«${c.nombre}» lleva una fórmula escrita por la IA`));
+      c.tipo = antes.tipo;
+      c.args = JSON.parse(JSON.stringify(antes.args));
+      cambio = true;
+    }
+    if (!cambio) return nueva;
+    const v = Quimica.validar(nueva);
+    return v.error ? nueva : { ...v.receta, modelo: nueva.modelo };
   };
 
   const Gemini = { convertir, cambiar, marcasDe, MODELOS };

@@ -260,6 +260,12 @@ small.aviso-sentido[hidden] { display: none; }
 .paso-contenido { flex: 1; min-width: 0; }
 .cant { font-weight: 700; color: var(--color); white-space: nowrap; }
 .cant.error { color: var(--peligro); }
+/* (versión 151) Un dato que se apunta al hacer la receta: una casilla dentro del texto del paso */
+.cant-en-paso { white-space: nowrap; font-weight: 700; color: var(--color); }
+input.en-paso { font: inherit; font-weight: 700; color: var(--color); background: var(--tarjeta); border: 1.5px solid var(--color); border-radius: 7px; padding: 1px 6px; margin: 0 1px; text-align: center; min-width: 3.2em; max-width: 7em; box-sizing: content-box; }
+input.en-paso.falta { border-style: dashed; background: var(--aviso-fondo, #fff6d6); }
+input.en-paso:focus { outline: 2px solid var(--color); outline-offset: 1px; }
+.casilla-en-paso { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--suave, inherit); }
 .crono-boton, .boton {
   border: 0;
   border-radius: 12px;
