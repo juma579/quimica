@@ -333,15 +333,15 @@
     volumen_moles: { nombre: 'Volumen de disolución que lleva unos moles', sale: ['volumen'],
       huecos: { moles: ['moles'], eq: ['numero', '?'], c: ['molar'] },
       cuenta: (a) => `${a.moles}${op('*', a.eq)} / ${a.c}` },
-    // (versión 152, lo pidió el usuario con su silicona: «5 de catalizador por cada 100 de base») Solo
-    // de la app (soloApp): no se le ofrecen a Gemini, para no cambiar lo que se le pide (ver www/ia.js)
-    proporcion: { nombre: 'En proporción con otra cantidad', sale: ['masa', 'volumen', 'moles'], saleComo: 'ref', soloApp: true,
+    // (versión 152, lo pidió el usuario con su silicona: «5 de catalizador por cada 100 de base»). Hasta la
+    // 158 eran «solo de la app» (soloApp: no se le ofrecían a Gemini); desde la 159, también para Gemini
+    proporcion: { nombre: 'En proporción con otra cantidad', sale: ['masa', 'volumen', 'moles'], saleComo: 'ref',
       huecos: { ref: ['masa', 'volumen', 'moles'], p_ref: ['numero'], p: ['numero'] },
       cuenta: (a) => `${a.ref} * ${a.p} / ${a.p_ref}` },
-    porcentaje_de: { nombre: 'Un porcentaje de otra cantidad', sale: ['masa', 'volumen', 'moles'], saleComo: 'total', soloApp: true,
+    porcentaje_de: { nombre: 'Un porcentaje de otra cantidad', sale: ['masa', 'volumen', 'moles'], saleComo: 'total',
       huecos: { total: ['masa', 'volumen', 'moles'], w: ['porcentaje'] },
       cuenta: (a) => `${a.total} * ${a.w}` },
-    suma: { nombre: 'Suma de cantidades', sale: ['masa', 'volumen', 'moles'], saleComo: 's1', soloApp: true,
+    suma: { nombre: 'Suma de cantidades', sale: ['masa', 'volumen', 'moles'], saleComo: 's1',
       mismaClase: ['s1', 's2', 's3', 's4'], mismaClaseAviso: 'todas las cantidades que se suman tienen que ser del mismo tipo (todas masas, o todas volúmenes, o todas moles)',
       huecos: { s1: ['masa', 'volumen', 'moles'], s2: ['masa', 'volumen', 'moles'], s3: ['masa', 'volumen', 'moles', '?'], s4: ['masa', 'volumen', 'moles', '?'] },
       cuenta: (a) => `${a.s1} + ${a.s2}${op('+', a.s3)}${op('+', a.s4)}` },

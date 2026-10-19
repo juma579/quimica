@@ -133,6 +133,61 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && capas.length && !e.defaultPrevented) { e.preventDefault(); atras(); }
   });
+  // ─── Fotos desde el ordenador (versión 156, lo pidió el usuario para el PC) ───
+  // Soltar archivos de una carpeta o pegar una captura con Ctrl+V. Van a: el cuadro de fotos que hay
+  // debajo del ratón; si no, el único del cuadro abierto; si no hay cuadro, el panel de arriba si
+  // recibe fotos (un grupo, una disolución, un cuaderno: abre su «nota o fotos» con ellas, alSoltarFotos).
+  // Fuera de esos sitios, se avisa (antes, el navegador abría la foto encima de la app)
+  const esImagen = (f) => (f.type && f.type.startsWith('image/')) || /\.(tiff?|bmp|png|jpe?g|gif|webp|heic|heif)$/i.test(f.name || '');
+  const traeArchivos = (dt) => Boolean(dt && [...(dt.types || [])].includes('Files'));
+  const destinoFotos = (el) => {
+    const sel = el && el.closest ? el.closest('.selector-fotos') : null;
+    if (sel && sel.anadirFotos) return sel;
+    const fondos = document.querySelectorAll('.dialogo-fondo');
+    if (fondos.length) { const s = fondos[fondos.length - 1].querySelectorAll('.selector-fotos'); return s.length === 1 ? s[0] : null; }
+    if (document.querySelector('.visor')) return null;
+    const panel = [...document.querySelectorAll('.panel')].pop();
+    return panel && panel.alSoltarFotos ? panel : null;
+  };
+  const darFotos = (d, archivos) => (d.anadirFotos ? d.anadirFotos(archivos) : d.alSoltarFotos(archivos));
+  let marcadoSoltar = null;
+  const marcarSoltar = (el) => {
+    if (marcadoSoltar === el) return;
+    if (marcadoSoltar) marcadoSoltar.classList.remove('soltando');
+    marcadoSoltar = el;
+    if (el) el.classList.add('soltando');
+  };
+  document.addEventListener('dragover', (e) => {
+    if (!traeArchivos(e.dataTransfer)) return;
+    e.preventDefault();
+    const d = destinoFotos(e.target);
+    e.dataTransfer.dropEffect = d ? 'copy' : 'none';
+    marcarSoltar(d);
+  });
+  document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) marcarSoltar(null); });
+  document.addEventListener('drop', (e) => {
+    if (!traeArchivos(e.dataTransfer)) return;
+    e.preventDefault();
+    marcarSoltar(null);
+    const d = destinoFotos(e.target);
+    const archivos = [...e.dataTransfer.files].filter(esImagen);
+    if (!d) { avisar('Para añadir fotos, suéltalas en un grupo, en una disolución, en el cuaderno o en el cuadro de un apunte'); return; }
+    if (!archivos.length) { avisar('Solo se pueden añadir fotos (jpg, png, tif…)'); return; }
+    darFotos(d, archivos);
+  });
+  document.addEventListener('paste', (e) => {
+    const archivos = [...((e.clipboardData && e.clipboardData.files) || [])].filter(esImagen);
+    if (!archivos.length) return; // un texto se pega como siempre
+    const activo = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+    const d = destinoFotos(activo);
+    if (!d) return;
+    e.preventDefault();
+    // Una captura llega como «image.png»: se le pone la fecha, para saber qué es
+    const ahora = new Date();
+    const nombre = `captura ${ahora.toLocaleDateString('es-ES').replace(/\//g, '-')} ${horaDe(ahora.getTime()).replace(':', '.')}`;
+    darFotos(d, archivos.map((f, i) => (f.name && f.name !== 'image.png' ? f
+      : new File([f], `${nombre}${archivos.length > 1 ? ` (${i + 1})` : ''}.${(f.type.split('/')[1] || 'png')}`, { type: f.type }))));
+  });
   // Cierra varias capas de golpe y después hace algo (abrir otra, por ejemplo)
   const cerrarCapas = (cuantas, luego) => {
     trasCerrar = luego || null;
@@ -453,11 +508,16 @@
       ev.preventDefault();
       ampliarEn(enMarco(ev), s * (ev.deltaY < 0 ? 1.2 : 1 / 1.2));
     }, { passive: false });
-    return { fijar: (e) => { s = e.s; t = { x: e.fx * marco.clientWidth, y: e.fy * marco.clientHeight }; ajustar(false); } };
+    return { fijar: (e) => { s = e.s; t = { x: e.fx * marco.clientWidth, y: e.fy * marco.clientHeight }; ajustar(false); },
+      // (versión 156) Con el teclado: + y − amplían alrededor del centro; 0 la deja como estaba
+      ampliar: (factor) => ampliarEn({ x: marco.clientWidth / 2, y: marco.clientHeight / 2 }, s * factor),
+      restaurar: () => { s = 1; t = { x: 0, y: 0 }; ajustar(); } };
   };
   // La foto en grande, con su título (✏️ para cambiarlo). Se amplía con los dedos o tocándola
   // (hacerZoom); se cierra con ✕ o con atrás. alCambiar: para repintar lo de debajo si se cambia el título
-  const verFoto = async (id, alCambiar) => {
+  // lista (versión 156): las fotos entre las que se pasa con ‹ › o con las flechas del teclado (si no
+  // se da, las del mismo apunte)
+  const verFoto = async (id, alCambiar, lista) => {
     const url = await urlVista(id).catch(() => null);
     if (!url) { avisar('Esa foto ya no está'); return; }
     const f = await window.Fotos.leer(id);
@@ -467,7 +527,7 @@
     const img = h('img', { src: url, alt: titulo.textContent });
     const marco = h('div', { class: 'visor-marco' }, img);
     // (al ampliar, la foto entera: a toda su resolución)
-    hacerZoom(marco, img, null, true, { entera: () => urlDe(id), ancho: f.ancho, alto: f.alto });
+    const zoom = hacerZoom(marco, img, null, true, { entera: () => urlDe(id), ancho: f.ancho, alto: f.alto });
     // Las fotos guardadas antes de la versión 126 se reducían a 2000 px y el original no está en el
     // aparato: se puede cambiar por el original (versión 126, lo pidió el usuario: «verlas a máxima
     // resolución»). Es otra foto (otro id), para que llegue igual a los demás aparatos
@@ -490,7 +550,7 @@
         for (const m of [urlsFotos, urlsMini, urlsVista]) { const u = m.get(id); if (u) { URL.revokeObjectURL(u); m.delete(id); } }
         avisar(`✅ Cambiada por la original: ${nueva.ancho} × ${nueva.alto} px`);
         if (alCambiar) alCambiar();
-        cerrarCapas(1, () => verFoto(nueva.id, alCambiar));
+        cerrarCapas(1, () => verFoto(nueva.id, alCambiar, Array.isArray(lista) ? lista.map((x) => (x === id ? nueva.id : x)) : undefined));
       } catch (e) { avisar(`No se ha podido usar esa foto (${(e && e.message) || 'error'})`); }
     } });
     // El aumento y la zona de la foto (lo pidió el usuario, para comparar al mismo aumento): un toque
@@ -531,8 +591,29 @@
         } }));
     };
     if (entrada) pintarInfo();
+    // Pasar a la foto de al lado (versión 156, lo pidió el usuario para el PC): ‹ › arriba, y ← → con el teclado
+    const vecinas = Array.isArray(lista) && lista.includes(id) ? lista : entrada && (entrada.fotos || []).includes(id) ? entrada.fotos : [id];
+    const pos = vecinas.indexOf(id);
+    const otraFoto = (k) => { const otra = vecinas[k]; if (otra != null) cerrarCapas(1, () => verFoto(otra, alCambiar, vecinas)); };
+    const pasar = vecinas.length > 1 && h('div', { class: 'visor-pasar' },
+      h('button', { class: 'icono pequeno', 'aria-label': 'Foto anterior', text: '‹', disabled: pos === 0, onclick: () => otraFoto(pos - 1) }),
+      h('span', { text: `${pos + 1} de ${vecinas.length}` }),
+      h('button', { class: 'icono pequeno', 'aria-label': 'Foto siguiente', text: '›', disabled: pos === vecinas.length - 1, onclick: () => otraFoto(pos + 1) }));
+    const teclas = (e) => {
+      if (!fondo.isConnected) { document.removeEventListener('keydown', teclas); return; }
+      // (no si se escribe en algo, ni con un cuadro abierto encima, como el de cambiar el título)
+      if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '') || document.querySelector('.visor ~ .dialogo-fondo, .visor ~ .dialogo')) return;
+      if (e.key === 'ArrowLeft' && pos > 0) { e.preventDefault(); otraFoto(pos - 1); }
+      else if (e.key === 'ArrowRight' && pos < vecinas.length - 1) { e.preventDefault(); otraFoto(pos + 1); }
+      else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoom.ampliar(1.5); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoom.ampliar(1 / 1.5); }
+      else if (e.key === '0') { e.preventDefault(); zoom.restaurar(); }
+    };
+    document.addEventListener('keydown', teclas);
+    const conRaton = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
     const fondo = h('div', { class: 'visor' },
       h('div', { class: 'visor-cabecera' },
+        pasar,
         h('div', { class: 'visor-titulo' }, titulo,
           entrada && h('small', { text: [entrada.grupo, K.momentoDe(c, entrada.grupoId, entrada.fecha), `${fechaCorta(entrada.fecha)} ${horaDe(entrada.fecha)}`, f.nombre, f.ancho && `${f.ancho} × ${f.alto} px`].filter(Boolean).join(' · ') })),
         entrada && h('button', { class: 'icono pequeno', 'aria-label': 'Cambiar el título', text: '✏️', onclick: async () => {
@@ -546,7 +627,9 @@
         h('button', { class: 'icono', 'aria-label': 'Cerrar', text: '✕', onclick: atras })),
       entrada && cajaInfo,
       marco,
-      h('p', { class: 'visor-ayuda', text: 'Amplía con dos dedos (o tocándola) y muévela con uno: al ampliar se ve a toda su resolución' }),
+      h('p', { class: 'visor-ayuda', text: conRaton
+        ? `Amplía con la rueda del ratón o con + y −, y muévela arrastrando: al ampliar se ve a toda su resolución.${vecinas.length > 1 ? ' ← → para pasar de foto.' : ''} Esc cierra.`
+        : 'Amplía con dos dedos (o tocándola) y muévela con uno: al ampliar se ve a toda su resolución' }),
       entrada && reducida && h('button', { class: 'visor-original', type: 'button', text: '📷 ¿Tienes la original con más resolución? Cámbiala', onclick: () => archivoOriginal.click() }),
       archivoOriginal);
     document.body.append(fondo);
@@ -555,15 +638,17 @@
   const miniaturas = (ids) => (ids && ids.length ? h('div', { class: 'miniaturas' }, ids.map((id) => {
     const img = h('img', { alt: 'Foto', loading: 'lazy', decoding: 'async' });
     urlMini(id).then((u) => { if (u) img.src = u; else img.alt = '(foto borrada)'; }).catch(() => {});
-    return h('button', { class: 'miniatura', 'aria-label': 'Ver la foto', onclick: () => verFoto(id) }, img);
+    return h('button', { class: 'miniatura', 'aria-label': 'Ver la foto', onclick: () => verFoto(id, undefined, ids) }, img);
   })) : null);
   // Para añadir fotos en una pregunta: { el, guardar() → ids }. Se preparan al elegirlas (las .tiff
   // se convierten) y solo se guardan al dar a Guardar
-  const selectorFotos = () => {
+  // (versión 156) iniciales: archivos que ya traía (soltados en el panel); y se pueden soltar o pegar
+  // encima (ver «Fotos desde el ordenador»): el selector tiene anadirFotos(archivos)
+  const selectorFotos = (iniciales) => {
     const elegidas = []; // { foto, url }
     const caja = h('div', { class: 'miniaturas' });
     const estado = h('small', { class: 'nota' });
-    const archivo = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+    const archivo = h('input', { type: 'file', accept: 'image/*,.tif,.tiff,.bmp', multiple: true, hidden: true });
     const pintar = () => poner(caja, elegidas.map((x) => h('span', { class: 'miniatura' },
       h('img', { src: x.url, alt: x.foto.nombre }),
       h('button', { class: 'quitar-foto', type: 'button', 'aria-label': 'Quitar la foto', text: '✕', onclick: () => {
@@ -572,9 +657,7 @@
         pintar();
       } }))));
     let trabajando = Promise.resolve();
-    archivo.addEventListener('change', () => {
-      const lista = [...archivo.files];
-      archivo.value = '';
+    const anadir = (lista) => {
       trabajando = trabajando.then(async () => {
         for (const [i, a] of lista.entries()) {
           estado.textContent = `Preparando ${lista.length > 1 ? `la foto ${i + 1} de ${lista.length}` : 'la foto'}…`;
@@ -586,9 +669,19 @@
         }
         estado.textContent = '';
       });
+    };
+    archivo.addEventListener('change', () => {
+      const lista = [...archivo.files];
+      archivo.value = '';
+      anadir(lista);
     });
+    const conRaton = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
     const el = h('div', { class: 'selector-fotos' },
-      h('button', { class: 'boton secundario', type: 'button', text: '📷 Añadir fotos', onclick: () => archivo.click() }), archivo, estado, caja);
+      h('button', { class: 'boton secundario', type: 'button', text: '📷 Añadir fotos', onclick: () => archivo.click() }),
+      conRaton && h('small', { class: 'nota soltar-ayuda', text: '…o arrástralas aquí desde una carpeta, o pega una captura con Ctrl+V' }),
+      archivo, estado, caja);
+    el.anadirFotos = anadir;
+    if (Array.isArray(iniciales) && iniciales.length) anadir(iniciales);
     const guardarTodas = async () => {
       await trabajando;
       const ids = [];
@@ -606,8 +699,8 @@
 
   // Una pregunta del cuaderno: lo de arriba (antes: elegir fase, grupo…), las fotos y la nota.
   // Devuelve null (cancelado) o { nota, fotos }
-  const pedirApunte = async ({ texto, antes, si = 'Guardar' }) => {
-    const sel = selectorFotos();
+  const pedirApunte = async ({ texto, antes, si = 'Guardar', archivos }) => {
+    const sel = selectorFotos(archivos);
     const r = await preguntar({ texto, detalle: [antes, sel.el], campo: { filas: 2, placeholder: 'Nota (si quieres): qué has hecho, qué has visto…', autocapitalize: 'sentences' }, si, no: 'Cancelar' });
     if (r === null) return null;
     return { nota: r.trim(), fotos: await sel.guardar() };
@@ -1401,15 +1494,24 @@
         pintarCalculado();
       } });
       const peticion = h('textarea', { class: 'campo', rows: 3, placeholder: 'Por ejemplo: «calcula también cuánto HCl 37 % hace falta para neutralizarlo» o «añade un paso para medir el pH»' });
-      const botonIA = h('button', { class: 'boton', text: '✨ Pedir el cambio a Gemini', onclick: async () => {
+      // (versión 159) Con Gemini saturado, también aquí el botón de probar con otro modelo
+      const pedirCambioIA = async (modelo) => {
+        const pulsado = modelo ? botonOtroIA : botonIA;
+        const texto = pulsado.textContent;
         botonIA.disabled = true;
-        botonIA.textContent = '✨ Gemini está trabajando… (puede tardar un minuto)';
+        botonOtroIA.disabled = true;
+        pulsado.textContent = '✨ Gemini está trabajando… (puede tardar un minuto)';
         const antes = JSON.parse(JSON.stringify(receta));
-        const r = await window.Gemini.cambiar(receta, peticion.value, clave());
+        const r = await window.Gemini.cambiar(receta, peticion.value, clave(), modelo ? { modelo } : undefined);
         if (!document.body.contains(botonIA)) { if (r.receta) guardarCambio(r.receta, antes); return; }
-        if (r.error) { botonIA.disabled = false; botonIA.textContent = '✨ Pedir el cambio a Gemini'; avisar(r.error); return; }
+        botonIA.disabled = false;
+        botonOtroIA.disabled = false;
+        pulsado.textContent = texto;
+        if (r.error) { if (r.saturado && !modelo) botonOtroIA.hidden = false; avisar(r.error); return; }
         guardarCambio(r.receta, antes);
-      } });
+      };
+      const botonIA = h('button', { class: 'boton', text: '✨ Pedir el cambio a Gemini', onclick: () => pedirCambioIA() });
+      const botonOtroIA = h('button', { class: 'boton secundario', hidden: true, text: `🔁 Probar con otro modelo de Gemini (${window.Gemini.RESERVA})`, onclick: () => pedirCambioIA(window.Gemini.RESERVA) });
       const guardarCambio = (nueva, antes) => {
         receta = ponerReceta(nueva);
         pintar();
@@ -1442,7 +1544,7 @@
         botonEmpezar,
       ];
       const bMas = [
-        hayIA() && [h('h3', { text: '✨ Pedir un cambio a la IA' }), peticion, botonIA],
+        hayIA() && [h('h3', { text: '✨ Pedir un cambio a la IA' }), peticion, botonIA, botonOtroIA],
         h('h3', { text: 'Más' }),
         receta.textoOriginal && h('button', { class: 'boton secundario', text: '📄 Ver el texto que pegaste', onclick: () => { original.hidden = !original.hidden; } }),
         original,
@@ -1969,7 +2071,47 @@
     // ── Pasos ──
     // Las cantidades se ponen en el texto con un toque: se toca dónde va y luego su nombre
     let ultimoPaso = null;
-    const cajaPasos = h('div');
+    // (versión 157, lo pidió el usuario: «mover pasos manteniendo pulsado y moviendo») Cada paso, con
+    // sus rótulos de fase y subfase, va en una caja que se arrastra manteniendo pulsado su cabecera
+    // («⠿ Paso 3») o su borde; desde las casillas y los botones, no (ahí es para escribir)
+    const cajaPasos = h('div', { class: 'pasos-editor', 'data-lista': 'pasos' });
+    // Cómo están los pasos y sus títulos (para deshacer y para saber si algo ha cambiado)
+    const fotoPasos = () => r.pasos.map((p) => ({ p, titulo: p.titulo, _conRotulo: p._conRotulo, subfase: p.subfase, parte: p.parte, _conSub: p._conSub }));
+    const volverAPasos = (foto) => {
+      r.pasos.splice(0, r.pasos.length, ...foto.map((x) => x.p));
+      for (const x of foto) for (const k of ['titulo', '_conRotulo', 'subfase', 'parte', '_conSub']) { if (x[k] === undefined) delete x.p[k]; else x.p[k] = x[k]; }
+    };
+    const huellaPasos = () => JSON.stringify(r.pasos.map((p) => [p._clave, p._conRotulo ? p.titulo || '' : null, p._conSub ? [p.subfase || '', p.parte || 'muestras'] : null]));
+    mantenerYArrastrar(cajaPasos, (listas) => {
+      const orden = (listas[0] || { ids: [] }).ids;
+      const antes = fotoPasos();
+      const huellaAntes = huellaPasos();
+      const porClave = new Map(r.pasos.map((p) => [p._clave, p]));
+      const faseDe = new Map(r.pasos.filter((p) => p._conRotulo).map((p) => [p._clave, p.titulo || '']));
+      const subDe = new Map(r.pasos.filter((p) => p._conSub).map((p) => [p._clave, { subfase: p.subfase || '', parte: p.parte || 'muestras' }]));
+      // Cada título va al primer paso que tenga debajo
+      const nuevos = [];
+      let fase = null;
+      let sub = null;
+      let mal = '';
+      for (const id of orden) {
+        const clave = id.slice(2);
+        if (id.startsWith('f:')) { if (fase !== null) mal = 'Debajo del título de una fase tiene que ir al menos un paso'; fase = faseDe.get(clave) ?? ''; }
+        else if (id.startsWith('s:')) { if (sub !== null) mal = 'Debajo del nombre de una subfase tiene que ir al menos un paso'; sub = subDe.get(clave) || { subfase: '', parte: 'muestras' }; }
+        else if (porClave.has(clave)) { nuevos.push({ p: porClave.get(clave), fase, sub }); fase = null; sub = null; }
+      }
+      if (fase !== null || sub !== null) mal = 'Debajo de un título de fase o de subfase tiene que ir al menos un paso';
+      if (mal || nuevos.length !== r.pasos.length) { pintarPasos(); if (mal) avisar(`${mal}: no se ha movido`); return; }
+      r.pasos.splice(0, r.pasos.length, ...nuevos.map((x) => x.p));
+      for (const { p, fase: f, sub: sb } of nuevos) {
+        if (f !== null) { p.titulo = f; p._conRotulo = true; } else { delete p.titulo; p._conRotulo = false; }
+        if (sb !== null) { p.subfase = sb.subfase; p.parte = sb.parte; p._conSub = true; } else { delete p.subfase; delete p.parte; p._conSub = false; }
+      }
+      pintarPasos();
+      if (huellaPasos() === huellaAntes) return;
+      const queFue = antes.map((x) => x.p._clave).join() !== r.pasos.map((p) => p._clave).join() ? '↕️ Paso cambiado de sitio' : '↕️ Título cambiado de sitio';
+      avisar(queFue, { texto: 'Deshacer', hacer: () => { volverAPasos(antes); pintarPasos(); } });
+    }, { salvo: 'input, textarea, select, button, label', suave: true });
     const chips = h('div', { class: 'chips' });
     const pintarChips = () => poner(chips, [...r.datos, ...r.calculos].filter((x) => x.id && x.nombre).map((x) => h('button', {
       class: 'chip', text: x.nombre,
@@ -1998,7 +2140,19 @@
           h('button', { class: 'quitar', type: 'button', 'aria-label': 'Quitar la subfase', text: '✕', onclick: () => { delete p.subfase; delete p.parte; p._conSub = false; pintarPasos(); } })),
         h('div', { class: 'chips' }, boton('disolucion', '🧪 Disolución'), boton('muestras', '🧫 Muestras')));
     };
-    const filaPaso = (p, i) => [p._conRotulo && rotuloFase(p, i), p._conSub && rotuloSubfase(p), filaDelPaso(p, i)];
+    // Cada paso y cada título (de fase o de subfase) es una pieza que se arrastra por separado: los pasos
+    // se mueven entre los títulos, y un título movido empieza la fase en el paso que quede debajo
+    // (data-id: «p:», «f:» o «s:» + la clave del paso). Antes de la 157 el título iba pegado a su paso
+    const asa = (que) => h('span', { class: 'asa-paso', 'aria-hidden': 'true', title: `Mantén pulsado y arrastra para cambiar ${que} de sitio`, text: '⠿' });
+    const filaPaso = (p, i) => {
+      if (!p._clave) p._clave = idDe('p');
+      return [
+        p._conRotulo && h('div', { class: 'rotulo-movil', 'data-id': `f:${p._clave}` }, asa('la fase'), rotuloFase(p, i)),
+        p._conSub && h('div', { class: 'rotulo-movil', 'data-id': `s:${p._clave}` }, asa('la subfase'), rotuloSubfase(p)),
+        h('div', { class: 'paso-editor', 'data-id': `p:${p._clave}` },
+          h('div', { class: 'paso-editor-cabeza', title: 'Mantén pulsado y arrastra para cambiar el paso de sitio' }, asa('el paso'), `Paso ${i + 1}`),
+          filaDelPaso(p, i))];
+    };
     // Debajo del texto de cada paso, lo que la app propone al leerlo (versión 83, lo pidió el usuario):
     // que una cantidad escrita con su número pase a ser un dato. (En la 83 los pasos se acortaron, con
     // el cronómetro, los ciclos y la fase detrás de «⋯» y una sugerencia de cronómetro; al usuario no
@@ -2049,8 +2203,7 @@
           p.subfase = '';
           p.parte = 'muestras';
           pintarPasos();
-          const t = cajaPasos.querySelector(`.fila-form[data-paso="${r.pasos.indexOf(p)}"]`);
-          const nombreSub = t && t.previousElementSibling && t.previousElementSibling.querySelector('input');
+          const nombreSub = cajaPasos.querySelector(`[data-id="s:${p._clave}"] input`);
           if (nombreSub) nombreSub.focus();
         } }));
       sugerenciasDe(p, sugerencias);
@@ -2107,7 +2260,9 @@
       if (hayCambios()) guardar('quimica.borrador-receta', { fecha: Date.now(), nueva, receta: { ...candidata(), id: r.id || null } });
     };
 
-    poner(cuerpo,
+    // (versión 159, lo pidió el usuario para el PC) En dos columnas, como la receta: a la izquierda lo de
+    // arriba, los datos y las cantidades; a la derecha, los pasos. En el móvil, una debajo de otra
+    poner(cuerpo, h('div', { class: 'form-receta' }, h('div', { class: 'form-izq' },
       h('span', { class: 'etiqueta', text: 'Nombre' }), nombre,
       h('span', { class: 'etiqueta', text: 'Resumen' }), resumen,
       h('span', { class: 'etiqueta', text: 'Seguridad' }), seguridad,
@@ -2129,14 +2284,17 @@
         h('button', { class: 'calc-tarjeta color-pesar', type: 'button', onclick: atajoSolido }, h('span', { class: 'calc-tarjeta-icono', text: '⚖️' }), h('span', { text: 'Disolución de un sólido' })),
         h('button', { class: 'calc-tarjeta color-diluir', type: 'button', onclick: atajoDilucion }, h('span', { class: 'calc-tarjeta-icono', text: '💧' }), h('span', { text: 'Dilución' })),
         h('button', { class: 'calc-tarjeta color-acido', type: 'button', onclick: atajoAcido }, h('span', { class: 'calc-tarjeta-icono', text: '🧴' }), h('span', { text: 'Ácido comercial' }))),
-      h('button', { class: 'boton secundario', text: '＋ Añadir una cantidad (eligiendo la fórmula)', onclick: anadirCantidad }),
+      h('button', { class: 'boton secundario', text: '＋ Añadir una cantidad (eligiendo la fórmula)', onclick: anadirCantidad })),
+      h('div', { class: 'form-der' },
       h('h3', { text: '📋 Pasos' }),
-      h('p', { class: 'nota', text: 'Para poner una cantidad en un paso, toca en el texto dónde va y luego su nombre aquí:' }),
-      chips,
+      h('p', { class: 'nota', text: 'Para cambiar un paso de sitio, mantén pulsado su ⠿ y arrástralo. Los títulos de fase y de subfase también se arrastran por su ⠿: la fase empieza en el paso que quede debajo.' }),
+      h('div', { class: 'form-chips' },
+        h('p', { class: 'nota', text: 'Para poner una cantidad en un paso, toca en el texto dónde va y luego su nombre aquí:' }),
+        chips),
       cajaPasos,
       h('button', { class: 'boton secundario', text: '＋ Añadir un paso', onclick: () => { r.pasos.push({ texto: '' }); pintarPasos(); const t = cajaPasos.querySelectorAll('textarea'); t[t.length - 1].focus(); } }),
-      h('p', { class: 'nota', text: 'Si unos pasos se repiten varias veces, pon cuántos ciclos son en el primero de ellos: saldrá un contador.' }),
-      h('button', { class: 'boton', text: 'Guardar', onclick: guardarFormulario }));
+      h('p', { class: 'nota', text: 'Si unos pasos se repiten varias veces, pon cuántos ciclos son en el primero de ellos: saldrá un contador.' }))),
+      h('div', { class: 'form-guardar' }, h('button', { class: 'boton', text: 'Guardar', onclick: guardarFormulario })));
     pintarTodo();
     pintarPasos();
     deInicio = deBorrador ? '' : JSON.stringify(candidata());
@@ -2158,11 +2316,40 @@
     const texto = h('textarea', { class: 'campo', rows: 10, value: leer('quimica.borrador', ''),
       placeholder: 'Pega o escribe aquí el procedimiento: qué se hace, con qué reactivos y en qué cantidades.\n\nCon las marcas:\n# Disolución de sal\n🧪 Preparar la disolución\nPesar 5,84 g de NaCl en 1 L de agua.',
       oninput: () => guardar('quimica.borrador', texto.value) });
-    const boton = h('button', { class: 'boton', text: '✨ Convertir en receta con Gemini', onclick: async () => {
+    // (versión 155, lo pidió el usuario: «me sale que está saturado, piensa en cómo mejorar») Lo que
+    // parece que sobra del texto (caracterización, resultados, referencias…): con Gemini cargado, una
+    // petición más ligera falla menos. No se quita solo: se enseña y el usuario decide (con Deshacer)
+    const sobra = h('div', { class: 'texto-sobra', hidden: true });
+    let relojSobra = null;
+    const pintarSobra = () => {
+      const partes = window.Gemini.partesQueSobran(texto.value);
+      sobra.hidden = !partes.length;
+      if (!partes.length) { sobra.replaceChildren(); return; }
+      const letras = partes.reduce((n, p) => n + (p.hasta - p.desde), 0);
+      poner(sobra,
+        h('p', { text: `✂️ Parece que sobra: ${partes.map((p) => `«${p.titulo}»`).join(', ')} (${letras} letras de ${texto.value.length}). No es el procedimiento, y con Gemini cargado una petición más ligera falla menos.` }),
+        h('button', { class: 'boton secundario', type: 'button', text: '✂️ Quitarlo del texto', onclick: () => {
+          const antes = texto.value;
+          texto.value = window.Gemini.quitarPartes(antes, partes);
+          texto.dispatchEvent(new Event('input'));
+          pintarSobra();
+          avisar(`Quitado: ${partes.map((p) => p.titulo).join(', ')}`, { texto: 'Deshacer', hacer: () => { texto.value = antes; texto.dispatchEvent(new Event('input')); pintarSobra(); } });
+        } }));
+    };
+    texto.addEventListener('input', () => { clearTimeout(relojSobra); relojSobra = setTimeout(pintarSobra, 400); });
+    pintarSobra();
+    // (versión 159) Con Gemini saturado, un botón para probar con otro modelo (una petición por toque)
+    const botonReserva = h('button', { class: 'boton secundario', text: `🔁 Probar con otro modelo de Gemini (${window.Gemini.RESERVA})`, onclick: () => convertirCon(window.Gemini.RESERVA) });
+    const reserva = h('div', { class: 'reserva-ia', hidden: true }, botonReserva,
+      h('p', { class: 'nota', text: 'Tiene su propia carga y su propio cupo, así que suele contestar cuando el de siempre está saturado. Las recetas pueden salir algo peores: revísala bien.' }));
+    const convertirCon = async (modelo) => {
       if (!hayIA()) { abrirAjustes(); return; }
+      const pulsado = modelo ? botonReserva : boton;
+      const antes = pulsado.textContent;
       boton.disabled = true;
-      boton.textContent = '✨ Gemini está trabajando… (puede tardar un minuto)';
-      const r = await window.Gemini.convertir(texto.value, clave());
+      botonReserva.disabled = true;
+      pulsado.textContent = '✨ Gemini está trabajando… (puede tardar un minuto)';
+      const r = await window.Gemini.convertir(texto.value, clave(), modelo ? { modelo } : undefined);
       if (r.receta) {
         const nueva = ponerReceta(r.receta);
         guardar('quimica.borrador', '');
@@ -2172,9 +2359,12 @@
         return;
       }
       boton.disabled = false;
-      boton.textContent = '✨ Convertir en receta con Gemini';
+      botonReserva.disabled = false;
+      pulsado.textContent = antes;
+      if (r.saturado && !modelo) reserva.hidden = false;
       avisar(r.error);
-    } });
+    };
+    const boton = h('button', { class: 'boton', text: '✨ Convertir en receta con Gemini', onclick: () => convertirCon() });
     // Las marcas (versión 90, lo pidió el usuario: «que lo escriba simple e indicando si algo es una
     // disolución, para que a la IA le sea más fácil»): tres botones que las escriben al empezar una
     // línea nueva donde está el cursor, y un ejemplo
@@ -2204,7 +2394,9 @@
           texto.dispatchEvent(new Event('input'));
         } })),
       texto,
+      sobra,
       boton,
+      reserva,
       !hayIA() && h('p', { class: 'nota', text: 'Para usar Gemini hace falta una clave gratuita: al pulsar el botón se abren los Ajustes para ponerla.' }),
       h('h3', { text: 'Sin la IA' }),
       h('button', { class: 'boton secundario', text: '✍️ Escribirla a mano', onclick: () => abrirFormulario(null) }),
@@ -2447,11 +2639,50 @@
   // Al soltar: alSoltar([{ lista, ids }]), todas las listas en orden
   // rejilla (versión 135, las fotos de un informe): las tarjetas van en filas de varias; antes o después
   // se decide por la mitad de izquierda a derecha (si no, por la de arriba abajo)
-  const mantenerYArrastrar = (caja, alSoltar, { rejilla = false } = {}) => {
+  // salvo (versión 157, los pasos del editor): desde lo que encaje con ese selector no se empieza a
+  // arrastrar (las casillas y los botones de un paso: mantener pulsado ahí es para escribir o seleccionar)
+  // suave (versión 158, los pasos del editor; el usuario: «no me gusta la sensación de movimiento»): la
+  // tarjeta va pegada al dedo, las demás se apartan deslizándose para hacerle hueco y, al soltar, encaja
+  // en su sitio con una animación. Sin suave, la tarjeta salta de hueco en hueco (como antes). Solo para
+  // una caja que es ella misma la lista, con position: relative (los sitios se miden con offsetTop,
+  // que no cambia con las animaciones: si no, las tarjetas que se apartan harían temblar el hueco)
+  const mantenerYArrastrar = (caja, alSoltar, { rejilla = false, salvo = null, suave = false } = {}) => {
     let reloj = null;
     let tarjeta = null;
     let arrastrando = false;
     let inicio = null;
+    let agarre = 0; // (suave) a cuánto del borde de arriba de la tarjeta la cogió el dedo
+    let ultimoY = 0;
+    // Dónde estaría la tarjeta sin moverla (en la pantalla), y ponerla debajo del dedo
+    const arribaDe = (el) => caja.getBoundingClientRect().top + caja.clientTop + el.offsetTop;
+    const pegarAlDedo = () => {
+      tarjeta.style.transform = `translateY(${ultimoY - agarre - arribaDe(tarjeta)}px) scale(1.02)`;
+    };
+    // Las demás tarjetas, de donde estaban a su sitio nuevo, deslizándose (se mide antes y después de moverla)
+    const deslizar = (antes) => {
+      for (const [el, arriba] of antes) {
+        const d = arriba - arribaDe(el);
+        if (!d) continue;
+        el.style.transition = 'none';
+        el.style.transform = `translateY(${d}px)`;
+        void el.offsetHeight;
+        el.style.transition = 'transform 180ms ease';
+        el.style.transform = '';
+      }
+    };
+    const moverSuave = (e) => {
+      ultimoY = e.clientY;
+      const otras = [...caja.children].filter((x) => x !== tarjeta && x.dataset.id);
+      // El hueco: antes de la primera tarjeta cuya mitad quede por debajo del dedo (manda el dedo, no el
+      // centro de la tarjeta: se coge por la cabecera, y con el centro, en un paso alto había que pasarse)
+      const siguiente = otras.find((x) => arribaDe(x) + x.offsetHeight / 2 > e.clientY) || null;
+      if (tarjeta.nextElementSibling !== siguiente && !(siguiente === null && tarjeta === caja.lastElementChild)) {
+        const antes = new Map(otras.map((x) => [x, arribaDe(x)]));
+        caja.insertBefore(tarjeta, siguiente);
+        deslizar(antes);
+      }
+      pegarAlDedo();
+    };
     let dedo = null;
     let ignorarClic = false;
     const scroller = () => caja.closest('.panel-cuerpo');
@@ -2470,6 +2701,7 @@
         if (e.clientY < r.top + 50) s.scrollTop -= 12;
         else if (e.clientY > r.bottom - 50) s.scrollTop += 12;
       }
+      if (suave) { moverSuave(e); return; }
       const bajo = document.elementFromPoint(e.clientX, e.clientY);
       if (!bajo || !caja.contains(bajo)) return;
       const otra = bajo.closest('[data-id]');
@@ -2495,18 +2727,30 @@
       if (!arrastrando) return;
       arrastrando = false;
       if (rejilla) for (const l of caja.querySelectorAll('[data-lista]')) l.style.minHeight = '';
-      tarjeta.classList.remove('arrastrando');
       caja.classList.remove('arrastrando-dentro');
       // El toque con el que se suelta no abre la tarjeta
       ignorarClic = true;
       setTimeout(() => { ignorarClic = false; }, 400);
-      alSoltar([...caja.querySelectorAll('[data-lista]')].map((l) => ({
+      // (la caja puede ser ella misma la lista, como los pasos del editor)
+      const avisarSoltada = () => alSoltar([...(caja.hasAttribute('data-lista') ? [caja] : []), ...caja.querySelectorAll('[data-lista]')].map((l) => ({
         lista: l.dataset.lista, ids: [...l.children].map((x) => x.dataset.id).filter(Boolean) })));
+      if (!suave) { tarjeta.classList.remove('arrastrando'); avisarSoltada(); return; }
+      // (suave) La tarjeta encaja en su hueco deslizándose, y después se avisa (que vuelve a pintar)
+      const t = tarjeta;
+      t.style.transition = 'transform 170ms ease';
+      t.style.transform = '';
+      setTimeout(() => {
+        t.style.transition = '';
+        t.style.pointerEvents = '';
+        t.classList.remove('arrastrando');
+        for (const x of caja.children) { x.style.transition = ''; x.style.transform = ''; }
+        avisarSoltada();
+      }, 180);
     };
     caja.addEventListener('pointerdown', (e) => {
       const t = e.target.closest('[data-id]');
       // (mantener pulsado un texto que se escribe es para escribir o seleccionar, no para arrastrar)
-      if (e.target.closest('.escribible')) return;
+      if (e.target.closest('.escribible') || (salvo && e.target.closest(salvo))) return;
       if (!t || !caja.contains(t) || !t.parentNode.hasAttribute('data-lista') || dedo !== null) return;
       tarjeta = t;
       inicio = { x: e.clientX, y: e.clientY };
@@ -2521,6 +2765,14 @@
         // una foto de una figura a otra todo se movía bajo el dedo y se soltaba un sitio más allá; versión 145)
         if (rejilla) for (const l of caja.querySelectorAll('[data-lista]')) l.style.minHeight = `${l.offsetHeight}px`;
         tarjeta.classList.add('arrastrando');
+        if (suave) {
+          agarre = inicio.y - arribaDe(tarjeta);
+          ultimoY = inicio.y;
+          tarjeta.style.transition = 'transform 120ms ease';
+          tarjeta.style.pointerEvents = 'none';
+          pegarAlDedo();
+          setTimeout(() => { if (arrastrando) tarjeta.style.transition = 'none'; }, 130);
+        }
         // (mientras, las carpetas vacías enseñan dónde se puede soltar)
         caja.classList.add('arrastrando-dentro');
         vibrar(25);
@@ -6254,8 +6506,10 @@
         avisar(`📓 Apuntado en ${elegidos.length} ${elegidos.length === 1 ? 'grupo' : 'grupos'}`);
         pintar();
       };
-      const nuevaNota = async () => {
-        const r = await pedirApunte({ texto: '✍️ Apuntar una nota (de toda la receta)' });
+      panel.alSoltarFotos = (archivos) => nuevaNota(archivos);
+      panel.dataset.soltar = '📷 Suelta aquí las fotos: irán a una nota del cuaderno';
+      const nuevaNota = async (archivos) => {
+        const r = await pedirApunte({ texto: '✍️ Apuntar una nota (de toda la receta)', archivos });
         if (!r || (!r.nota && !r.fotos.length)) return;
         apuntar({ tipo: 'nota', grupoId: null, grupo: null, recetaId: receta.id, ...K.marcaDe(amb), receta: receta.nombre, nota: r.nota, fotos: r.fotos });
         pintar();
@@ -6390,7 +6644,7 @@
   const abrirGrupo = (receta, grupoId, alVolver) => {
     // ✏️ arriba, al lado del nombre: cambiar nombre, muestras o lo que le toca (lo pone pintar)
     let editarGrupo = null;
-    const { cuerpo, titulo } = abrirPanel('🧫', [h('button', { class: 'icono', 'aria-label': 'Cambiar el nombre del grupo', text: '✏️', onclick: () => { if (editarGrupo) editarGrupo(); } })], alVolver);
+    const { cuerpo, titulo, panel: panelGrupo } = abrirPanel('🧫', [h('button', { class: 'icono', 'aria-label': 'Cambiar el nombre del grupo', text: '✏️', onclick: () => { if (editarGrupo) editarGrupo(); } })], alVolver);
     const fases = fasesDe(recetaDe(receta.id));
     const pintar = () => {
       const c = leerCuaderno();
@@ -6580,12 +6834,15 @@
         } catch (e) { avisar(e.message); return; }
         pintar();
       };
-      const nota = async () => {
-        const r = await pedirApunte({ texto: `✍️ Nota · ${g.nombre}` });
+      const nota = async (archivos) => {
+        const r = await pedirApunte({ texto: `✍️ Nota · ${g.nombre}`, archivos });
         if (!r || (!r.nota && !r.fotos.length)) return;
         apuntar({ tipo: 'nota', ...comun(), ...r });
         pintar();
       };
+      // (versión 156) Fotos soltadas encima del grupo (desde una carpeta del ordenador): su nota, con ellas
+      panelGrupo.alSoltarFotos = nota;
+      panelGrupo.dataset.soltar = `📷 Suelta aquí las fotos: irán a una nota de «${g.nombre}»`;
       // Una medida (versión 114): capacitancia, espesor… con su valor y unidad; se compara entre grupos
       const medir = async () => {
         const ed = editorMedidas([{}], leerCuaderno());
@@ -6726,7 +6983,7 @@
   // ─── Una disolución: si queda, cuánto, de qué está hecha, quién la usó, notas y fotos ───
   const abrirDisolucion = (receta, id, alVolver) => {
     let editarDis = null;
-    const { cuerpo, titulo } = abrirPanel('🧪', [h('button', { class: 'icono', 'aria-label': 'Cambiar el nombre de la disolución', text: '✏️', onclick: () => { if (editarDis) editarDis(); } })], alVolver);
+    const { cuerpo, titulo, panel: panelDis } = abrirPanel('🧪', [h('button', { class: 'icono', 'aria-label': 'Cambiar el nombre de la disolución', text: '✏️', onclick: () => { if (editarDis) editarDis(); } })], alVolver);
     const pintar = () => {
       const c = leerCuaderno();
       const d = K.disolucionDe(c, id);
@@ -6816,8 +7073,10 @@
           nota: `🧮 Números corregidos: ${cambios.map((x) => `${x.nombre} ${antes.get(x.id) == null ? '—' : Q.cantidad(antes.get(x.id), x.unidad)} → ${x.valor == null ? '—' : Q.cantidad(x.valor, x.unidad)}`).join('; ')}` });
         pintar();
       };
-      const nota = async () => {
-        const r = await pedirApunte({ texto: `✍️ Nota · ${d.nombre}` });
+      panelDis.alSoltarFotos = (archivos) => nota(archivos);
+      panelDis.dataset.soltar = `📷 Suelta aquí las fotos: irán a una nota de «${d.nombre}»`;
+      const nota = async (archivos) => {
+        const r = await pedirApunte({ texto: `✍️ Nota · ${d.nombre}`, archivos });
         if (!r || (!r.nota && !r.fotos.length)) return;
         apuntar({ tipo: 'nota', disolucionId: id, disolucion: d.nombre, recetaId: receta.id, ...K.marcaDe(ambitoDe(d)), receta: receta.nombre, ...r });
         pintar();
@@ -6872,12 +7131,21 @@
   const tituloApunte = (e) => (e.tipo === 'nota' && e.nota ? e.nota.split('\n')[0].slice(0, 60) : K.titularDe(e));
   // El pie de una foto. enSesion (dentro de su sesión, que ya dice qué fue y de quién): su título
   // puesto a mano o «Foto N», y su aumento y zona. Si no (al comparar): todo, con la fecha
+  // (versión 159, lo pidió el usuario) El nombre de su archivo («1964.bmp»), de subtítulo: se lee una vez por foto
+  const nombresFoto = new Map();
+  const nombreDeFoto = (id) => {
+    if (!nombresFoto.has(id)) nombresFoto.set(id, window.Fotos.leer(id).then((f) => (f && f.nombre) || '').catch(() => ''));
+    return nombresFoto.get(id);
+  };
   const pieFoto = (c, id, e, color, enSesion) => {
     const info = K.infoFoto(e, id);
+    const archivo = h('small', { class: 'foto-archivo', hidden: true });
+    nombreDeFoto(id).then((n) => { if (n) { archivo.textContent = `📄 ${n}`; archivo.title = n; archivo.hidden = false; } });
     const deQuien = [e.grupo || (e.disolucion && `🧪 ${e.disolucion}`), K.momentoDe(c, e.grupoId, e.fecha)].filter(Boolean).join(' · ');
     const detalles = [info.aumento && `🔍 ${info.aumento}`, info.zona && `📍 ${info.zona}`, !enSesion && fechaCorta(e.fecha)].filter(Boolean).join(' · ');
     return h('div', { class: 'foto-pie' },
       h('b', { text: enSesion ? c.titulos[id] || `Foto ${e.fotos.indexOf(id) + 1}` : K.tituloFoto(c, id, e) }),
+      archivo,
       !enSesion && deQuien && h('small', { class: 'foto-de' }, color && h('span', { class: 'punto-grupo', style: `background: ${color}` }), deQuien),
       (detalles || enSesion) && h('small', { text: detalles || 'Sin aumento' }));
   };
@@ -7114,24 +7382,15 @@
           h('option', { value: '', text: 'Todos', selected: !filtro[clave] }),
           opciones.map((v) => h('option', { value: v, text: v, selected: filtro[clave] === v }))));
       const enAlbum = elAlbum ? elegidas.filter((id) => elAlbum.fotos.includes(id)).length : 0;
+      // (versión 159, lo pidió el usuario para el PC) Los filtros van en su caja y las fotos en otra: en el
+      // PC, los filtros en una columna a la izquierda y las fotos al lado; en el móvil, uno debajo de otro
       poner(cuerpo, todas.length
-        ? [
+        ? h('div', { class: 'fotos-pantalla' }, h('aside', { class: 'fotos-filtros' },
           // Los álbumes
           h('div', { class: 'chips albumes' },
             chip('🖼️ Todas las fotos', !elAlbum, () => { album = ''; pintar(); }),
             albumes.map((a) => chip(`📁 ${a.nombre} (${a.fotos.length})`, a.id === album, () => { album = a.id; pintar(); })),
             chip('＋ Álbum', false, async () => { const n = await nuevoAlbum(elegidas.length ? [...elegidas] : []); if (n) { if (elegidas.length) ponerElegidas([]); album = n.id; } pintar(); })),
-          elAlbum && h('div', { class: 'album-cabecera' }, h('b', { text: `📁 ${elAlbum.nombre}` }),
-            h('button', { class: 'icono pequeno', 'aria-label': 'Cambiar el álbum', text: '✏️', onclick: cambiarAlbum })),
-          // Sus notas (lo pidió el usuario): se guardan solas mientras se escribe
-          elAlbum && (() => {
-            let reloj = null;
-            const guardarNota = (texto) => cambiarCuaderno((d) => { const a = d.albumes.find((x) => x.id === elAlbum.id); if (a) a.nota = texto; });
-            return h('textarea', { class: 'campo album-nota', rows: 3, autocapitalize: 'sentences', value: elAlbum.nota || '', placeholder: 'Notas del álbum: qué comparas, qué ves, conclusiones…',
-              oninput: (ev) => { clearTimeout(reloj); const t = ev.target.value; reloj = setTimeout(() => guardarNota(t), 600); },
-              onchange: (ev) => { clearTimeout(reloj); guardarNota(ev.target.value); } });
-          })(),
-          elAlbum && !elAlbum.fotos.length && h('p', { class: 'nota', text: 'Vacío: en «🖼️ Todas las fotos», marca el círculo de las que quieras y pulsa «📁 Añadir a un álbum».' }),
           // Qué tipo de fotos (fuera de un álbum)
           !elAlbum && h('div', { class: 'chips' }, h('span', { class: 'chips-rotulo', text: 'Ver:' }),
             TIPOS_FOTO.map(([t, texto]) => {
@@ -7148,7 +7407,19 @@
             elegir('🔬 Técnica', 'tecnica', tecnicas),
             elegir('🧪 Fase', 'fase', fasesFoto)),
           !elAlbum && todas.length > 0 && h('button', { class: 'boton secundario', text: '▦ Ver en tabla: grupos × aumentos', onclick: () => abrirTablaFotos(receta, pintar, amb) }),
-          fotos.length > 1 && h('div', { class: 'sesion-acciones' }, botonMarcar(fotos.map((f) => f.id), `todas las que se ven (${fotos.length})`)),
+          fotos.length > 1 && h('div', { class: 'sesion-acciones' }, botonMarcar(fotos.map((f) => f.id), `todas las que se ven (${fotos.length})`))),
+          h('div', { class: 'fotos-lista' },
+          elAlbum && h('div', { class: 'album-cabecera' }, h('b', { text: `📁 ${elAlbum.nombre}` }),
+            h('button', { class: 'icono pequeno', 'aria-label': 'Cambiar el álbum', text: '✏️', onclick: cambiarAlbum })),
+          // Sus notas (lo pidió el usuario): se guardan solas mientras se escribe
+          elAlbum && (() => {
+            let reloj = null;
+            const guardarNota = (texto) => cambiarCuaderno((d) => { const a = d.albumes.find((x) => x.id === elAlbum.id); if (a) a.nota = texto; });
+            return h('textarea', { class: 'campo album-nota', rows: 3, autocapitalize: 'sentences', value: elAlbum.nota || '', placeholder: 'Notas del álbum: qué comparas, qué ves, conclusiones…',
+              oninput: (ev) => { clearTimeout(reloj); const t = ev.target.value; reloj = setTimeout(() => guardarNota(t), 600); },
+              onchange: (ev) => { clearTimeout(reloj); guardarNota(ev.target.value); } });
+          })(),
+          elAlbum && !elAlbum.fotos.length && h('p', { class: 'nota', text: 'Vacío: en «🖼️ Todas las fotos», marca el círculo de las que quieras y pulsa «📁 Añadir a un álbum».' }),
           fotos.length
             ? sesiones.map(sesion)
             : !(elAlbum && !elAlbum.fotos.length) && h('p', { class: 'nota', text: base.length ? 'Ninguna foto con esos filtros.' : 'Ninguna foto de ese tipo: elige qué ver arriba.' }),
@@ -7157,7 +7428,7 @@
             h('button', { class: 'boton', disabled: !elegidas.length, text: elegidas.length ? `⚖️ Comparar (${elegidas.length})` : '⚖️ Marca las fotos que quieras comparar', onclick: () => abrirComparar(receta, pintar, amb) }),
             elegidas.length > 0 && h('button', { class: 'boton secundario', text: `📁 Añadir a un álbum (${elegidas.length})`, onclick: aUnAlbum }),
             enAlbum > 0 && h('button', { class: 'boton secundario', text: `Quitar del álbum (${enAlbum})`, onclick: quitarDelAlbum }),
-            elegidas.length > 0 && h('button', { class: 'boton discreto', text: 'Desmarcar todas', onclick: () => { ponerElegidas([]); pintar(); } }))]
+            elegidas.length > 0 && h('button', { class: 'boton discreto', text: 'Desmarcar todas', onclick: () => { ponerElegidas([]); pintar(); } }))))
         : h('p', { class: 'nota', text: 'Aún no hay fotos en esta receta. Se añaden tocando un grupo («📷 Nota o fotos», «🔬 Muestra para analizar»…) o al terminar una fase.' }));
     };
     // (si llega algo del PC mientras se escriben las notas del álbum, no se repinta: se perdería)
@@ -7923,6 +8194,15 @@
   };
 
   // "hace 2 min"
+  // (versión 159) Cuántos días enteros han pasado (para decir «hace 2 días»)
+  const diasDesde = (ms) => Math.floor((Date.now() - ms) / 86400000);
+  // «Lo último que llegó del móvil» (lo apunta el programa del PC en su carpeta: ultimoMovil de /api/hola)
+  const textoUltimoMovil = (u) => {
+    if (!u) return 'Ningún móvil ha sincronizado todavía con esta carpeta.';
+    const cuando = Date.now() - u.hace;
+    const dias = diasDesde(cuando);
+    return `Lo último que llegó del móvil (${[u.tipo, u.nombre].filter(Boolean).join(' ')}): ${haceCuanto(cuando)}${dias >= 1 ? ` (hace ${dias} ${dias === 1 ? 'día' : 'días'})` : ''}.`;
+  };
   const haceCuanto = (ms) => {
     const s = Math.round((Date.now() - ms) / 1000);
     return s < 60 ? 'ahora mismo' : s < 3600 ? `hace ${Math.round(s / 60)} min` : `el ${fechaCorta(ms)} a las ${horaDe(ms)}`;
@@ -7953,7 +8233,7 @@
       // Una sola respuesta, arriba y clara (versión 100, el usuario dijo que era confuso): o hay un
       // móvil sincronizando ahora (verde) o no (amarillo, y qué hacer)
       const moviles = h('div', { class: 'moviles-pc sin-moviles' });
-      const verMoviles = (aparatos) => {
+      const verMoviles = (aparatos, ultimoMovil) => {
         const lista = aparatos || [];
         const hace = (a) => haceCuanto(Date.now() - a.hace);
         // (los de la página web sincronizan a mano, al tocar «Sincronizar»: no están «sin sincronizar»)
@@ -7971,15 +8251,17 @@
           lista.map((a) => h('span', { class: 'movil-linea', text: `${[a.tipo, a.nombre].filter(Boolean).join(' ')} · ${a.manual ? 'desde la página web, a mano · ' : ''}última sincronización ${hace(a)}${a.pendiente ? ' · le faltan cambios de este PC' : ''}` })),
           atrasados.length > 0 && h('span', { class: 'movil-linea', text: 'Has cambiado algo en este PC que el móvil aún no tiene. En el móvil (misma wifi), toca «🔄 Sincronizar con el PC».' }),
           !activos.length && !atrasados.length && h('span', { class: 'movil-linea', text: manuales.length ? 'Desde la página web, los cambios se pasan cuando en el móvil se toca «🔄 Sincronizar con el PC» (con la misma wifi).'
-            : solos.length ? 'Abre la app en el móvil (con la misma wifi) y se sincroniza sola.' : 'Escanea con el móvil el código QR de aquí abajo.' }));
+            : solos.length ? 'Abre la app en el móvil (con la misma wifi) y se sincroniza sola.' : 'Escanea con el móvil el código QR de aquí abajo.' }),
+          // (versión 159) Cuándo llegó algo del móvil por última vez, aunque el programa se haya cerrado entre medias
+          !activos.length && !atrasados.length && h('span', { class: 'movil-linea', text: textoUltimoMovil(ultimoMovil) }));
       };
       const mirarMoviles = () => {
         if (!moviles.isConnected) return;
-        pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => verMoviles(r.aparatos)).catch(() => {});
+        pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => verMoviles(r.aparatos, r.ultimoMovil)).catch(() => {});
         setTimeout(mirarMoviles, 4000);
       };
       setTimeout(mirarMoviles, 4000);
-      const cargarInfo = () => pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos); return r; }).then((r) => poner(info,
+      const cargarInfo = () => pedirPC('', '', '/api/hola').then((r) => r.json()).then((r) => { verMoviles(r.aparatos, r.ultimoMovil); return r; }).then((r) => poner(info,
         // El usuario de ahora (versión 111): cada uno con su carpeta de datos y su código
         h('p', {}, '👤 Usuario: ', h('b', { text: r.usuario || '' })),
         h('button', { class: 'boton secundario', type: 'button', text: '🔁 Cambiar de usuario…', onclick: () => abrirUsuarios(() => { cargarInfo(); dibujarQR(); }) }),
@@ -8147,14 +8429,14 @@
         ],
         h('h3', { text: '✨ Gemini (la IA)' }),
         hayIA()
-          ? [h('p', { class: 'nota', text: '✅ Hay una clave puesta. Solo está en este móvil y solo se usa para hablar con Gemini.' }),
+          ? [h('p', { class: 'nota', text: `✅ Hay una clave puesta. Solo está en ${enElPC ? 'este ordenador' : 'este móvil'} y solo se usa para hablar con Gemini.` }),
             h('button', { class: 'boton secundario', text: 'Quitar la clave', onclick: async () => {
               if (!await preguntar({ texto: '¿Quitar la clave de Gemini?', detalle: 'Las recetas se quedan. Dejarán de salir los botones de la IA.', si: 'Quitar' })) return;
               localStorage.removeItem('quimica.clave');
               pintar();
             } })]
           : [h('p', { class: 'nota', text: 'Para convertir textos en recetas hace falta una clave de Gemini. Es gratis:' }),
-            h('p', { class: 'nota', text: '1. En el navegador, entra en aistudio.google.com/apikey con tu cuenta de Google.\n2. Pulsa «Crear clave de API» y copia la clave.\n3. Pégala aquí. Se guarda solo en este móvil.', style: 'white-space: pre-line' }),
+            h('p', { class: 'nota', text: `1. En el navegador, entra en aistudio.google.com/apikey con tu cuenta de Google.\n2. Pulsa «Crear clave de API» y copia la clave.\n3. Pégala aquí. Se guarda solo en ${enElPC ? 'este ordenador' : 'este móvil'}.`, style: 'white-space: pre-line' }),
             campoClave,
             h('button', { class: 'boton', text: 'Guardar la clave', onclick: () => {
               const k = campoClave.value.trim();
@@ -8418,18 +8700,20 @@
   const vigilarMoviles = () => {
     const chips = new Set(); // el de arriba y los de dentro de cada pantalla abierta
     // (manual: el último que sincroniza desde la página web, a mano; no está «desconectado» por no sincronizar)
-    let ultimo = { activos: 0, lista: 0, manual: null };
+    let ultimo = { activos: 0, lista: 0, manual: null, ultimoMovil: null };
     const pintarUno = (chip) => {
-      const { activos, lista, manual } = ultimo;
+      const { activos, lista, manual, ultimoMovil } = ultimo;
+      // (versión 159) Sin móvil, desde cuándo: «📱 sin conectar · 2 días»
+      const dias = ultimoMovil ? diasDesde(Date.now() - ultimoMovil.hace) : 0;
       const falta = Boolean(manual && manual.pendiente); // el móvil a mano se ha quedado atrás
       const bien = !falta && (activos > 0 || Boolean(manual));
       chip.classList.toggle('con-movil', bien);
       chip.classList.toggle('sin-movil', !bien);
-      chip.textContent = falta ? '📱 falta pasar al móvil' : activos > 0 ? '📱 conectado' : manual ? `📱 a mano · ${haceCuanto(Date.now() - manual.hace)}` : lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar';
+      chip.textContent = falta ? '📱 falta pasar al móvil' : activos > 0 ? '📱 conectado' : manual ? `📱 a mano · ${haceCuanto(Date.now() - manual.hace)}` : `${lista > 0 ? '📱 sin sincronizar' : '📱 sin conectar'}${dias >= 1 ? ` · ${dias} ${dias === 1 ? 'día' : 'días'}` : ''}`;
       chip.title = falta ? 'Hay cambios en este PC que un móvil aún no tiene: en ese móvil, toca «Sincronizar con el PC»'
         : activos > 0 ? 'Hay un móvil sincronizando con este PC'
           : manual ? 'Un móvil con la app de internet sincroniza con este PC cuando lo pide (botón «Sincronizar» del móvil)'
-            : 'Ningún móvil sincroniza ahora con este PC. Toca para ver cómo conectarlo.';
+            : `Ningún móvil sincroniza ahora con este PC. ${textoUltimoMovil(ultimoMovil)} Toca para ver cómo conectarlo.`;
     };
     const nuevo = (id) => {
       const c = h('button', { ...(id ? { id } : {}), class: 'chip-movil sin-movil', type: 'button', 'aria-label': 'Estado del móvil: ver en Ajustes',
@@ -8439,8 +8723,8 @@
       return c;
     };
     // (los de pantallas ya cerradas se van quitando)
-    const pintarChip = (activos, lista, manual) => {
-      ultimo = { activos, lista, manual };
+    const pintarChip = (activos, lista, manual, ultimoMovil) => {
+      ultimo = { activos, lista, manual, ultimoMovil };
       for (const c of chips) { if (!c.isConnected && c.id !== 'b-movil') chips.delete(c); else pintarUno(c); }
     };
     window.chipMovilNuevo = () => nuevo();
@@ -8458,7 +8742,12 @@
         const manuales = lista.filter((a) => a.manual).sort((a, b) => a.hace - b.hace);
         // (el que se ha quedado atrás, si lo hay, va primero: es el que importa)
         const atras = manuales.find((a) => a.pendiente) || null;
-        pintarChip(activos, lista.filter((a) => !a.manual).length, atras || manuales[0] || null);
+        pintarChip(activos, lista.filter((a) => !a.manual).length, atras || manuales[0] || null, r.ultimoMovil || null);
+        // (versión 159) Al abrir, si hace más de un día que no llega nada del móvil, se dice una vez
+        if (habia === null && !activos && !manuales.length && r.ultimoMovil && diasDesde(Date.now() - r.ultimoMovil.hace) >= 1) {
+          const dias = diasDesde(Date.now() - r.ultimoMovil.hace);
+          avisar(`📱 Hace ${dias} ${dias === 1 ? 'día' : 'días'} que no llega nada del móvil: abre la app en el móvil (con la misma wifi) para que se pasen sus cambios`, { texto: 'Ver', hacer: () => $('b-ajustes').click() });
+        }
         if (atras && !avisadoAtras) {
           avisadoAtras = true;
           avisar(`📱 Hay cambios en el PC que ${[atras.tipo, atras.nombre].filter(Boolean).join(' ')} aún no tiene: en el móvil, toca «🔄 Sincronizar con el PC»`);

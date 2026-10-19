@@ -20,8 +20,16 @@
   // el mismo cupo (el error 429 de uno nombra al otro). Por eso el segundo intento es el mismo
   // modelo otra vez: sirve cuando la receta sale mal (Gemini no contesta igual dos veces). Si está
   // saturado (5xx) no se prueba el segundo en esa vuelta: se espera y se da otra vuelta
-  const MODELOS = ['gemini-3.8-flash', 'gemini-3.8-flash'];
-  const VUELTAS = 3;
+  // (versión 155, lo pidió el usuario: «prefiero que la app haga solo un intento por búsqueda»):
+  // UNA sola petición por cada vez que se pulsa. Ni otra vuelta si está saturado, ni otro intento si la
+  // receta sale con fallos (se entrega con sus avisos): cada petición, también las rechazadas, gasta del
+  // cupo de 20 al día. Si falla, el usuario decide si vuelve a pulsar (el texto se queda guardado)
+  const MODELOS = ['gemini-3.8-flash'];
+  const VUELTAS = 1;
+  // (versión 159, lo pidió el usuario) Otro modelo de Gemini, con su propia carga y su propio cupo, para
+  // cuando el de siempre está saturado. No se usa solo (un intento por búsqueda): la app ofrece un botón
+  // «Probar con otro modelo» y cada toque es una petición (opciones.modelo)
+  const RESERVA = 'gemini-3.7-flash';
   const ESPERA_SATURADO_MS = 6000;
   // (la receta larga del usuario tardó 88 s con Gemini cargado: con 90 s por poco no llega)
   const TIEMPO_MAXIMO = 150 * 1000;
@@ -128,6 +136,9 @@ La app tiene DATOS (números que el usuario cambia), CANTIDADES (las calcula la 
     - masa_moles: masa a partir de unos moles. moles, eq?, pm, pureza?
     - volumen_masa: volumen de un líquido puro. masa, densidad.
     - volumen_moles: volumen de disolución con unos moles. moles, eq?, c.
+    - proporcion: lo que va de un componente por cada tanto de otro ("5 de catalizador por cada 100 de base"). ref (la masa o el volumen del otro), p_ref (sus partes: 100), p (las de este: 5).
+    - porcentaje_de: un porcentaje de otra cantidad (el 30 % en masa de una mezcla). total, w (en %).
+    - suma: la suma de 2 a 4 cantidades del mismo tipo (la masa total de una mezcla). s1, s2, s3?, s4?
     - libre: solo si nada encaja. huecos null y escribe la cuenta en expr (ids, números con punto, + - * / ^ y paréntesis, con los cambios de unidades).
   - expr: null salvo en libre. original: solo si el texto dice literalmente esa cantidad ("se pesan 5,84 g"), en esa unidad; si no, null.
 - pasos: imperativo de tú ("Pesa", "Añade"; nunca "Pesar" ni "Se pesa"), una acción por paso, en orden, sin saltarte nada (temperaturas, orden de adición, material, lo que hay que observar, "solo para las muestras X").
@@ -143,6 +154,8 @@ Cómo montarlo:
 - Cada disolución tiene su dato de volumen a preparar, y su paso dice cuánto se prepara. Ningún dato puede quedar sin usar.
 - Ácido o base comercial diluido ("HNO3 6 M"): datos de concentración, volumen, densidad y riqueza del comercial ("falta" si no los da) y pm; un cálculo conc_comercial, otro dilucion con él como c_stock, y un paso: "En vitrina, añade lentamente {v_acido} de HNO3 comercial sobre agua destilada (nunca al revés) y completa hasta {v_bano}".
 - Mezcla en proporción (5 : 1 : 4): UN dato con el volumen total y un dato por parte (unidad "partes"); el volumen de cada parte, con parte; lo que se disuelve en una parte, con ese volumen en el hueco v.
+- Composición en % en masa (wt %): UN dato con la masa total a preparar ("falta"), un dato por componente con su % (unidad "%") y la masa de cada uno con porcentaje_de. Si los % de una tabla suman 100, son del total. Si un componente es un sistema A/B con su proporción ("L = LY556/XB3473 (100:23)"), su % es del sistema entero: la masa de A y la de B, con parte (total = la masa del sistema; partes 100 y 23).
+- "X de B por cada 100 de A" cuando A se pesa primero (su masa es un dato): la de B con proporcion.
 - Síntesis: un reactivo de referencia (su masa es un dato), sus moles con moles_masa y los demás por equivalentes con masa_moles (un líquido, después volumen_masa).
 - No inventes cantidades, reactivos ni pasos (salvo el de preparar el ácido diluido). Todo en español correcto, con tildes.`;
 
@@ -322,7 +335,7 @@ Cómo montarlo:
     if (err.estado === SEGURIDAD) return 'Gemini no ha querido convertir este texto por sus normas de seguridad. Puedes escribir la receta a mano con ✍️ (las cuentas las hace la app igual).';
     if (err.estado === 429) return 'Gemini ha llegado a su límite gratuito de hoy (20 peticiones al día, y los intentos con Gemini saturado también cuentan). Se renueva de madrugada';
     if (err.estado === 401 || err.estado === 403) return 'Gemini no acepta la clave: revísala en ⚙️ Ajustes';
-    if (err.estado >= 500) return 'Gemini está saturado ahora mismo; prueba otra vez en unos minutos';
+    if (err.estado >= 500) return 'Gemini está saturado ahora mismo. No se ha vuelto a intentar, para no gastar tus peticiones: tu texto sigue aquí; prueba otra vez en unos minutos';
     if (err.estado === 0 && err.message.startsWith('Receta')) return `La IA ha dado una receta que no vale (${err.message.slice(18)}). Prueba otra vez`;
     return 'La IA no ha podido ahora; prueba otra vez en un rato';
   };
@@ -344,7 +357,7 @@ Cómo montarlo:
     const sinCupo = new Set();
     for (let vuelta = 0; vuelta < VUELTAS; vuelta++) {
       let saturado = false;
-      for (const modelo of MODELOS) {
+      for (const modelo of (opciones && opciones.modelo ? [opciones.modelo] : MODELOS)) {
         if (sinCupo.has(modelo)) continue;
         try {
           const datos = leerJson(await llamar(modelo, texto, clave, pedir));
@@ -365,6 +378,8 @@ Cómo montarlo:
             if (!Quimica.esFija(c)) v.receta.avisos.push(`«${c.nombre}» lleva una fórmula escrita por la IA, no una de las fijas de la app: revísala (= ${c.expr}).`);
           }
           v.receta.modelo = modelo;
+          // (hecha con el modelo de reserva: que se revise con más cuidado)
+          if (!MODELOS.includes(modelo)) v.receta.avisos.push(`Hecha con otro modelo de Gemini (${modelo}), porque el de siempre estaba saturado: revisa la receta con más cuidado.`);
           if (!v.receta.avisos.some((a) => a.startsWith('Un paso nombra') || a.startsWith('El dato'))) return { receta: v.receta, modelo };
           if (!conFallos) conFallos = { receta: v.receta, modelo };
         } catch (err) {
@@ -377,7 +392,7 @@ Cómo montarlo:
           // (ni si Gemini se niega por seguridad: se negaría otra vez, y cada intento gasta del cupo)
           if ([-1, 401, 403, SEGURIDAD].includes(err.estado)) return { error: mensajeDe(err), detalle: err.message };
           // Sin contestar a tiempo: el siguiente intento es el mismo modelo, que tampoco contestaría
-          if (err.estado === TIEMPO) return conFallos || { error: mensajeDe(err), detalle: err.message };
+          if (err.estado === TIEMPO) return conFallos || { error: mensajeDe(err), detalle: err.message, saturado: true };
           if (err.estado === 429) sinCupo.add(modelo);
           // Saturado: el siguiente de la lista es el mismo modelo, también saturado; y cada petición,
           // aunque la rechace por saturación, gasta del cupo diario. Se pasa a la siguiente vuelta
@@ -389,7 +404,8 @@ Cómo montarlo:
     }
     if (conFallos) return conFallos;
     const motivo = rechazo || ultimo;
-    return { error: mensajeDe(motivo), detalle: motivo.message };
+    // (saturado: la app ofrece probar con el modelo de reserva)
+    return { error: mensajeDe(motivo), detalle: motivo.message, saturado: motivo.estado >= 500 };
   };
 
   let enMarcha = false;
@@ -442,7 +458,55 @@ Cómo montarlo:
     return v.error ? nueva : { ...v.receta, modelo: nueva.modelo };
   };
 
-  const Gemini = { convertir, cambiar, marcasDe, MODELOS };
+  // (versión 155, lo pidió el usuario: «a mí me sale que está saturado, piensa en cómo mejorar»)
+  // Las partes de un texto pegado que no son el procedimiento: caracterización, resultados,
+  // discusión, conclusiones, referencias… Con Gemini cargado, una petición más ligera falla menos.
+  // No se quitan solas: la app las enseña y el usuario decide. Una parte empieza en un título (una
+  // línea que empieza por «Título corto.» o que es solo un título corto) con una de esas palabras, y
+  // acaba en el siguiente título que no las lleve. Devuelve [{ titulo, desde, hasta }] (posiciones en el texto)
+  const SOBRA = /caracteri[sz]a|characteri[sz]|\bresult|resultados|discus|conclu|referenc|bibliograf|acknowledg|agradec|supporting information|statistical analys|análisis estadístico/i;
+  const tituloDe = (linea) => {
+    const t = linea.trim();
+    const conPunto = /^(?:\d+(?:\.\d+)*\.?\s+)?([A-ZÁÉÍÓÚÑ][^.\n]{2,70}?)\.(?:\s|$)/.exec(t);
+    const solo = /^(?:\d+(?:\.\d+)*\.?\s+)?([A-ZÁÉÍÓÚÑ][^.\n:;]{2,60})$/.exec(t);
+    const m = conPunto || solo;
+    if (!m) return null;
+    const titulo = m[1].trim();
+    // Un título es corto (no una frase que empieza la línea)
+    if (titulo.split(/\s+/).length > 6) return null;
+    return titulo;
+  };
+  const partesQueSobran = (texto) => {
+    const t = String(texto || '');
+    const partes = [];
+    let abierta = null;
+    let pos = 0;
+    let anterior = '';
+    for (const linea of t.split('\n')) {
+      // Solo empieza un apartado una línea que empieza párrafo: la de antes acaba en punto (o en una
+      // cita detrás del punto, «results.5») o está vacía. En un texto copiado de un PDF, muchas
+      // líneas empiezan por mayúscula a mitad de frase («Instruments) machine. Three samples…»)
+      const empiezaParrafo = !anterior.trim() || /[.:]\s*[\d,–-]*\s*$/.test(anterior);
+      const titulo = empiezaParrafo ? tituloDe(linea) : null;
+      anterior = linea;
+      if (titulo) {
+        const sobra = SOBRA.test(titulo);
+        if (abierta && !sobra) { abierta.hasta = pos; partes.push(abierta); abierta = null; }
+        if (sobra && !abierta) abierta = { titulo, desde: pos };
+        else if (sobra && abierta) { abierta.hasta = pos; partes.push(abierta); abierta = { titulo, desde: pos }; }
+      }
+      pos += linea.length + 1;
+    }
+    if (abierta) { abierta.hasta = t.length; partes.push(abierta); }
+    return partes.filter((p) => t.slice(p.desde, p.hasta).trim().length > 0);
+  };
+  const quitarPartes = (texto, partes) => {
+    let t = String(texto || '');
+    for (const p of [...partes].sort((a, b) => b.desde - a.desde)) t = t.slice(0, p.desde) + t.slice(p.hasta);
+    return t.replace(/\n{3,}/g, '\n\n').trim();
+  };
+
+  const Gemini = { convertir, cambiar, marcasDe, partesQueSobran, quitarPartes, MODELOS, RESERVA };
   if (typeof module !== 'undefined' && module.exports) module.exports = Gemini;
   else raiz.Gemini = Gemini;
 })(typeof window !== 'undefined' ? window : globalThis);
