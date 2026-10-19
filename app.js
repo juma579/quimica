@@ -2695,12 +2695,8 @@
         if (Math.hypot(e.clientX - inicio.x, e.clientY - inicio.y) > 10) terminar();
         return;
       }
-      const s = scroller();
-      if (s) {
-        const r = s.getBoundingClientRect();
-        if (e.clientY < r.top + 50) s.scrollTop -= 12;
-        else if (e.clientY > r.bottom - 50) s.scrollTop += 12;
-      }
+      dedoEn = { x: e.clientX, y: e.clientY };
+      if (!e.sinMover && Math.hypot(e.clientX - inicio.x, e.clientY - inicio.y) > 10) seHaMovido = true;
       if (suave) { moverSuave(e); return; }
       const bajo = document.elementFromPoint(e.clientX, e.clientY);
       if (!bajo || !caja.contains(bajo)) return;
@@ -2716,6 +2712,41 @@
       const lista = zona ? zona.querySelector('[data-lista]') : bajo.closest('[data-lista]');
       if (lista && tarjeta.parentNode !== lista) lista.append(tarjeta);
     };
+    // Cerca del borde de arriba o de abajo, la pantalla se mueve sola mientras se arrastra (versión 160; el
+    // usuario: «hay que bajar mucho el paso para que empiece a deslizar»). Antes solo con el dedo a menos de
+    // 50 px del borde y solo al mover el dedo, a 12 px cada vez. Ahora: en el último 22 % de la pantalla
+    // (al menos 80 px), mirando el borde de la tarjeta (con suave: se coge por arriba y el resto ya
+    // llegaba abajo), sin parar aunque el dedo esté quieto y más deprisa cuanto más dentro
+    let dedoEn = null;
+    let seHaMovido = false;
+    let bucle = null;
+    const desplazarSolo = () => {
+      bucle = null;
+      if (!arrastrando) return;
+      const s = scroller();
+      if (s && dedoEn && seHaMovido) {
+        const r = s.getBoundingClientRect();
+        const zona = Math.max(80, r.height * 0.22);
+        let arriba = dedoEn.y;
+        let abajo = dedoEn.y;
+        if (suave) {
+          arriba = dedoEn.y - agarre;
+          // (en una tarjeta muy alta, como mucho un 40 % de la pantalla por debajo del dedo: con 160 px, en el
+          // móvil la tarjeta ya tocaba el borde y la pantalla no bajaba)
+          abajo = Math.min(arriba + tarjeta.offsetHeight, dedoEn.y + Math.max(160, r.height * 0.4));
+        }
+        let v = 0;
+        if (abajo > r.bottom - zona) v = Math.min(1, (abajo - (r.bottom - zona)) / zona);
+        else if (arriba < r.top + zona) v = -Math.min(1, (r.top + zona - arriba) / zona);
+        if (v) {
+          const antes = s.scrollTop;
+          s.scrollTop += Math.round(v * 16) || Math.sign(v);
+          // (la pantalla se ha movido debajo del dedo: el hueco puede ser otro)
+          if (s.scrollTop !== antes) mover({ pointerId: dedo, clientX: dedoEn.x, clientY: dedoEn.y, sinMover: true });
+        }
+      }
+      bucle = requestAnimationFrame(desplazarSolo);
+    };
     const soltar = (e) => { if (e.pointerId === dedo) terminar(); };
     const terminar = () => {
       clearTimeout(reloj);
@@ -2723,6 +2754,10 @@
       document.removeEventListener('pointerup', soltar);
       document.removeEventListener('pointercancel', soltar);
       document.removeEventListener('touchmove', sinDesplazar);
+      if (bucle) cancelAnimationFrame(bucle);
+      bucle = null;
+      dedoEn = null;
+      seHaMovido = false;
       dedo = null;
       if (!arrastrando) return;
       arrastrando = false;
@@ -2765,6 +2800,8 @@
         // una foto de una figura a otra todo se movía bajo el dedo y se soltaba un sitio más allá; versión 145)
         if (rejilla) for (const l of caja.querySelectorAll('[data-lista]')) l.style.minHeight = `${l.offsetHeight}px`;
         tarjeta.classList.add('arrastrando');
+        dedoEn = { ...inicio };
+        bucle = requestAnimationFrame(desplazarSolo);
         if (suave) {
           agarre = inicio.y - arribaDe(tarjeta);
           ultimoY = inicio.y;
@@ -4001,7 +4038,8 @@
     const n = { tabla: 0, fig: 0 };
     // (cada parte que se pone o se quita con «Qué incluir» lleva su zona: así, en un informe guardado, se
     // puede quitar o volver a poner solo esa parte sin tocar lo demás; versión 142)
-    const enZona = (zona, fn) => { const a = B.length; fn(); for (let k = a; k < B.length; k++) B[k].zona = zona; };
+    // (sin pisar la zona que ya tenga un bloque: las notas de cada fase van dentro de «Caracterización» con la suya)
+    const enZona = (zona, fn) => { const a = B.length; fn(); for (let k = a; k < B.length; k++) if (!B[k].zona) B[k].zona = zona; };
     const sec = (texto) => B.push({ t: 'h1', texto, num: true });
     const sub = (texto) => B.push({ t: 'h2', texto, num: true });
     const sinNumero = (texto) => B.push({ t: 'h1', texto, sinNumero: true });
@@ -4113,6 +4151,11 @@
 
     // Resultados
     const quitadas = new Set(op.quitadas || []);
+    // Las notas de cada fase (versión 161, lo pidió el usuario: «ya que hemos dividido las fotos por fases, añadir
+    // ahí las notas que hayamos escrito en cada fase, poniendo de qué grupo»). Solo las que no salen ya en otro
+    // sitio: no las de las disoluciones (están en su tabla y en la de los grupos finales), ni las correcciones de
+    // números, ni la de recibir muestras (en la tabla de los grupos finales), ni las que van debajo de su figura
+    const notaVa = (e) => Boolean(op.conNotasFase) && !e.disolucionId && e.tipo !== 'recibir' && /[\p{L}\p{N}]/u.test(e.nota || '') && !esNotaDeCorreccion(e.nota);
     const fotos = [];
     if (op.fotos && op.fotos !== 'ninguna') {
       if (op.fotos.startsWith('album:')) {
@@ -4123,8 +4166,10 @@
         }
       } else {
         for (const e of entradas) {
-          if (!(e.fotos || []).length || (op.fotos === 'analisis' && K.tipoFoto(e) !== 'analisis')) continue;
-          for (const a of K.apartadosDe(e)) for (const id of a.fotos) fotos.push({ id, e, apartado: a.titulo });
+          // (con las fotos de los análisis, también las de una nota de fase: ilustran lo que dice; van con sus notas)
+          const deNota = op.fotos === 'analisis' && K.tipoFoto(e) !== 'analisis';
+          if (!(e.fotos || []).length || (deNota && !notaVa(e))) continue;
+          for (const a of K.apartadosDe(e)) for (const id of a.fotos) fotos.push({ id, e, apartado: a.titulo, deNota });
         }
       }
     }
@@ -4138,9 +4183,16 @@
       const fi = fasesDe(recetaDe(f.e.recetaId)).indexOf(fase);
       return { ...f, i, pi, fase: fi < 0 ? '' : fase, fi: fi < 0 ? Infinity : fi };
     }).sort((a, b) => a.pi - b.pi || a.fi - b.fi || a.e.fecha - b.e.fecha || a.i - b.i);
+    const conFigura = new Set(fotosVan.map((f) => f.e.id));
+    const notasVan = entradas.filter((e) => notaVa(e) && !conFigura.has(e.id)).map((e, i) => {
+      const pi = Math.max(0, partes.findIndex((p) => K.casa(e, p.amb)));
+      const fase = K.faseDeEntrada(c, e);
+      const fi = fasesDe(recetaDe(e.recetaId)).indexOf(fase);
+      return { e, i, pi, fase: fi < 0 ? '' : fase, fi: fi < 0 ? Infinity : fi };
+    }).sort((a, b) => a.pi - b.pi || a.fi - b.fi || a.e.fecha - b.e.fecha || a.i - b.i);
     const arboles = partes.filter((p) => p.receta.id && K.gruposDe(c, p.amb).length).map((p) => ({ p, el: arbolDeMuestras(c, p.receta, () => {}, p.amb, 0, true) }));
     const figuras = new Map(); // id de apunte → «Figura 3» o «Figuras 3–5» (para el anexo)
-    if (grupos.length || medidas.filas.length || fotosVan.length || distintos.length) {
+    if (grupos.length || medidas.filas.length || fotosVan.length || notasVan.length || distintos.length) {
       sec('Resultados');
       if (grupos.length) {
         sub('Seguimiento de las muestras');
@@ -4199,8 +4251,9 @@
           medidas.filas.map((f) => [f.nombre, ...medidas.grupos.map((g) => { const x = f.celdas[g.id]; return x ? `${K.numTexto(x.valor)}${x.unidad ? ` ${x.unidad}` : ''}${x.n > 1 ? ` (${x.n})` : ''}` : '—'; })]),
           medidas.grupos.map((_, i) => i + 1));
       }
-      if (fotosVan.length) enZona('fotos', () => {
-        sub('Caracterización');
+      if (fotosVan.length || notasVan.length) enZona('fotos', () => {
+        // (con notas, «Caracterización y observaciones»; sin fotos, solo las observaciones; versión 161)
+        sub(!notasVan.length ? 'Caracterización' : fotosVan.length ? 'Caracterización y observaciones' : 'Observaciones durante el proceso');
         // Una figura por sesión (un apunte) y apartado, con sus fotos como paneles (a), (b)… y un pie común
         // (antes, una figura por foto: 35 figuras casi iguales). Tocar un panel cambia su texto o lo quita;
         // tocar el pie, la descripción de la figura (inf.figuras[clave])
@@ -4210,22 +4263,40 @@
         for (const f of fotosVan) {
           const ult = conjuntos[conjuntos.length - 1];
           if (ult && ult.e === f.e && ult.apartado === f.apartado && ult.fotos.length < 6) ult.fotos.push(f.id);
-          else conjuntos.push({ e: f.e, apartado: f.apartado, fotos: [f.id], sigue: Boolean(ult && ult.e === f.e && ult.apartado === f.apartado), fase: f.fase, pi: f.pi });
+          else conjuntos.push({ e: f.e, apartado: f.apartado, fotos: [f.id], sigue: Boolean(ult && ult.e === f.e && ult.apartado === f.apartado), fase: f.fase, fi: f.fi, pi: f.pi, deNota: f.deNota });
         }
-        // (un título por fase encima de sus figuras, si hay más de una fase o más de un cuaderno)
-        const deVarios = new Set(conjuntos.map((k) => k.pi)).size > 1;
-        const rotulo = (k) => `${deVarios ? `${partes[k.pi].ficha.nombre}: ` : ''}${k.fase ? fasesNombre(k.fase) : 'Otras imágenes'}`;
-        const conRotulos = new Set(conjuntos.map(rotulo)).size > 1;
-        B.push({ t: 'p', texto: `Las imágenes obtenidas se ordenan por fase del procedimiento y, dentro de cada fase, por sesión de trabajo${conjuntos.length > 1 ? ` (⟦FS:f${n.fig + 1}:f${n.fig + conjuntos.length}⟧)` : ` (⟦F:f${n.fig + 1}⟧)`}. En cada pie se indican el grupo de muestras, la etapa del procedimiento en la que se encontraba y, cuando se registraron, el aumento y la zona observada.` });
+        // Las fases que salen (con figuras, con notas o con las dos), en el orden de su receta
+        const claveFase = (x) => `${x.pi}|${x.fase}`;
+        const fasesVan = [...new Map([...conjuntos, ...notasVan].map((x) => [claveFase(x), x])).values()].sort((a, b) => a.pi - b.pi || a.fi - b.fi);
+        // (un título por fase encima de lo suyo, si hay más de una fase o más de un cuaderno)
+        const deVarios = new Set(fasesVan.map((k) => k.pi)).size > 1;
+        const rotulo = (k) => {
+          if (k.fase) return `${deVarios ? `${partes[k.pi].ficha.nombre}: ` : ''}${fasesNombre(k.fase)}`;
+          const conFotos = conjuntos.some((x) => claveFase(x) === claveFase(k));
+          const conNotas = notasVan.some((x) => claveFase(x) === claveFase(k));
+          return `${deVarios ? `${partes[k.pi].ficha.nombre}: ` : ''}${conFotos && conNotas ? 'Otras imágenes y observaciones' : conFotos ? 'Otras imágenes' : 'Otras observaciones'}`;
+        };
+        const conRotulos = new Set(fasesVan.map(rotulo)).size > 1;
+        const citaFiguras = conjuntos.length > 1 ? ` (⟦FS:f${n.fig + 1}:f${n.fig + conjuntos.length}⟧)` : conjuntos.length ? ` (⟦F:f${n.fig + 1}⟧)` : '';
+        B.push({ t: 'p', texto: !conjuntos.length
+          ? 'Se recogen, por fase del procedimiento, las observaciones anotadas en el cuaderno durante el trabajo, con el grupo de muestras al que se refiere cada una.'
+          : `Las imágenes${notasVan.length ? ' y las observaciones anotadas en el cuaderno' : ' obtenidas'} se ordenan por fase del procedimiento y, dentro de cada fase, por sesión de trabajo${citaFiguras}. En cada pie se indican el grupo de muestras, la etapa del procedimiento en la que se encontraba y, cuando se registraron, el aumento y la zona observada.${notasVan.length ? ' Al final de cada fase se recogen las demás observaciones anotadas durante ella, con el grupo al que se refiere cada una.' : ''}` });
         let rotuloAntes = null;
-        for (const [ik, k] of conjuntos.entries()) {
-          if (conRotulos && rotulo(k) !== rotuloAntes) { rotuloAntes = rotulo(k); B.push({ t: 'p', clase: 'fase', texto: rotuloAntes }); }
+        // (cada bloque sabe de qué fase es: así, al ponerlas o quitarlas en un informe ya editado, las notas
+        // van a su fase aunque se hayan cambiado los títulos; ver aplicarIncluir)
+        const ordenDe = (k) => [k.pi, Number.isFinite(k.fi) ? k.fi : 9999];
+        const ponerRotulo = (k) => { if (conRotulos && rotulo(k) !== rotuloAntes) { rotuloAntes = rotulo(k); B.push({ t: 'p', clase: 'fase', texto: rotuloAntes, faseOrden: ordenDe(k) }); } };
+        const nombreDe = (e) => (e.grupoId ? (K.grupoDe(c, e.grupoId) || e).nombre || e.grupo : '');
+        const ponerFigura = (k, ik) => {
+          ponerRotulo(k);
           n.fig++;
           const e = k.e;
           figuras.set(e.id, figuras.has(e.id) ? { ...figuras.get(e.id), hasta: n.fig } : { desde: n.fig, hasta: n.fig });
           const clave = `${e.id}|${k.apartado || ''}`;
           const momento = sinEmoji(K.momentoDe(c, e.grupoId, e.fecha)).replace(/ · /g, ', ');
-          const que = e.tipo === 'analisis' ? `Imágenes de ${sinEmoji(e.tecnica) || 'caracterización'}` : e.tipo === 'preparar' ? `Imágenes de la disolución ${e.disolucion}` : 'Imágenes';
+          // (con una sola foto, «Imagen»; versión 161)
+          const img = k.fotos.length === 1 && !k.sigue ? 'Imagen' : 'Imágenes';
+          const que = e.tipo === 'analisis' ? `${img} de ${sinEmoji(e.tecnica) || 'caracterización'}` : e.tipo === 'preparar' ? `${img} de la disolución ${e.disolucion}` : img;
           const de = e.grupo ? ` del grupo ${(K.grupoDe(c, e.grupoId) || e).nombre || e.grupo}` : e.disolucion && e.tipo !== 'preparar' ? ` de la disolución ${e.disolucion}` : '';
           const cuando = momento && momento !== 'sin empezar' ? `, ${momento.replace(/^tras (fase)/i, 'tras la $1').replace(/^en (fase)/i, 'durante la $1').replace(/^en /, 'durante ')}` : '';
           const cabeza = `${que}${de}${cuando}${k.apartado ? ` (${sinEmoji(k.apartado)})` : ''}, ${fechaNum(e.fecha)}${k.sigue ? ' (continuación)' : ''}`;
@@ -4241,7 +4312,33 @@
           // figuras, debajo de la última
           const ultimaDeLaSesion = !conjuntos[ik + 1] || conjuntos[ik + 1].e !== e;
           const observaciones = ultimaDeLaSesion ? sinEmojiLineas(e.nota) : '';
-          B.push({ t: 'fotos', id: `f${n.fig}`, clave, entradaId: e.id, finSesion: ultimaDeLaSesion, paneles, observaciones, cabeza, desc });
+          B.push({ t: 'fotos', id: `f${n.fig}`, clave, entradaId: e.id, finSesion: ultimaDeLaSesion, paneles, observaciones, cabeza, desc, faseOrden: ordenDe(k) });
+        };
+        // Al final de cada fase, lo anotado durante ella (versión 161): las figuras de las notas que llevan fotos
+        // (con la nota debajo, como las de los análisis) y una línea por cada nota sin fotos: «fecha · grupo. nota».
+        // Todo con su zona (notasFase), para ponerlo o quitarlo con «Qué incluir»
+        const ponerNotas = (fx) => {
+          const suyas = notasVan.filter((x) => claveFase(x) === claveFase(fx));
+          const deNotas = conjuntos.map((k, ik) => [k, ik]).filter(([k]) => k.deNota && claveFase(k) === claveFase(fx));
+          if (!suyas.length && !deNotas.length) return;
+          enZona('notasFase', () => {
+            for (const [k, ik] of deNotas) ponerFigura(k, ik);
+            if (!suyas.length) return;
+            ponerRotulo(fx);
+            const orden = ordenDe(fx);
+            B.push({ t: 'p', texto: conRotulos && fx.fase ? 'Observaciones anotadas en el cuaderno durante esta fase:' : 'Observaciones anotadas en el cuaderno:', faseOrden: orden });
+            B.push({ t: 'lista', faseOrden: orden,
+              items: suyas.map(({ e }) => {
+                const nota = sinEmoji(e.nota).replace(/\s+/g, ' ').trim();
+                return `${fechaNum(e.fecha)}${nombreDe(e) ? ` · ${nombreDe(e)}` : ''}. ${nota}${/[.!?)]$/.test(nota) ? '' : '.'}`;
+              }),
+              // (cada línea se corrige tocándola, como las del anexo: lo corregido puede pasar a la nota del apunte)
+              editarItems: suyas.map(({ e }) => ({ tipo: 'apuntes', ids: [e.id] })) });
+          });
+        };
+        for (const fx of fasesVan) {
+          conjuntos.forEach((k, ik) => { if (!k.deNota && claveFase(k) === claveFase(fx)) ponerFigura(k, ik); });
+          ponerNotas(fx);
         }
       });
       if (distintos.length) {
@@ -5119,7 +5216,8 @@
     const op = () => {
       const i = fichaDeAhora().informe || {};
       // (versión 149: las diferencias de los grupos finales, de entrada sí; la historia entera de cada grupo, solo si se pide)
-      return { conReceta: i.sinReceta !== true, conAnterior: i.sinAnterior !== true, conHistoria: i.sinHistoria === false, conVariaciones: i.sinVariaciones !== true,
+      // (versión 161: las notas de cada fase, de entrada sí)
+      return { conReceta: i.sinReceta !== true, conAnterior: i.sinAnterior !== true, conHistoria: i.sinHistoria === false, conVariaciones: i.sinVariaciones !== true, conNotasFase: i.sinNotasFase !== true,
         // (las disoluciones, aparte desde la versión 147; desde la 148, solo si se pide: lo suyo ya está en su tabla)
         conHistoriaDis: i.sinHistoriaDis === false, fotos: i.fotos || 'analisis', quitadas: i.quitadas || [] };
     };
@@ -5207,6 +5305,7 @@
         relacionados.length > 0 && h('p', { class: 'etiqueta-campo', text: 'Cuadernos unidos a este (las muestras pasaron de uno a otro):' }), relacionadosEl,
         hayReceta && casilla('sinReceta', 'El procedimiento (reactivos, cantidades y pasos)'),
         casilla('sinVariaciones', 'Las diferencias de los grupos finales respecto al procedimiento'),
+        casilla('sinNotasFase', 'Las notas de cada fase, con su grupo (en «Caracterización y observaciones»)'),
         // (la historia entera de cada grupo, quitada de entrada desde la versión 149)
         h('label', { class: 'parte-opcion' }, h('input', { type: 'checkbox', checked: inf0.sinHistoria === false,
           onchange: (e) => guardarInforme({ sinHistoria: !e.target.checked }) }), ' Anexo: la historia completa de cada grupo'),
@@ -5997,7 +6096,7 @@
     // incluir también salga en el que estás editando»). Al cambiar algo se quita o se pone SOLO esa parte
     // (el procedimiento, las fotos de Caracterización, un anexo), hecha con los datos de ahora; lo demás que
     // se haya editado se queda. Se deshace con ↶ ──
-    const OPCIONES = { procedimiento: 'conReceta', variaciones: 'conVariaciones', historia: 'conHistoria', historiaDis: 'conHistoriaDis', anterior: 'conAnterior' };
+    const OPCIONES = { procedimiento: 'conReceta', variaciones: 'conVariaciones', notasFase: 'conNotasFase', historia: 'conHistoria', historiaDis: 'conHistoriaDis', anterior: 'conAnterior' };
     // La zona de cada bloque: la suya (los hechos desde la versión 142) o, en los de antes, por su título
     const zonasDe = (B) => {
       let z = null;
@@ -6020,7 +6119,7 @@
     const incluidoAhora = () => {
       const zs = new Set(zonasDe(x.bloques));
       const guardado = x.incluir || {};
-      return { conReceta: zs.has('procedimiento'), conHistoria: zs.has('historia'), conHistoriaDis: zs.has('historiaDis'), conVariaciones: zs.has('variaciones'), conAnterior: zs.has('anterior'),
+      return { conReceta: zs.has('procedimiento'), conHistoria: zs.has('historia'), conHistoriaDis: zs.has('historiaDis'), conVariaciones: zs.has('variaciones'), conAnterior: zs.has('anterior'), conNotasFase: zs.has('notasFase'),
         fotos: zs.has('fotos') ? (guardado.fotos && guardado.fotos !== 'ninguna' ? guardado.fotos : ctx.op().fotos === 'ninguna' ? 'analisis' : ctx.op().fotos) : 'ninguna' };
     };
     // Cómo se reconoce un mismo bloque en dos informes (para no repetir números ni romper las citas)
@@ -6039,6 +6138,65 @@
         veces.set(m, k);
         return `${m}#${k}`;
       });
+    };
+    // La fase de un bloque de «Caracterización» (versión 161): la suya (faseOrden: [cuaderno, nº de fase]) o, en
+    // los de antes, la del apunte de sus fotos. Para colocar las notas de cada fase por su fase y no por los
+    // títulos, que se pueden haber cambiado a mano
+    const mismoOrden = (a, b) => Boolean(a && b && a[0] === b[0] && a[1] === b[1]);
+    const ordenFase = (b) => {
+      if (b.faseOrden) return b.faseOrden;
+      if (b.t !== 'fotos' || !b.entradaId) return null;
+      const c = leerCuaderno();
+      const e = c.entradas.find((y) => y.id === b.entradaId);
+      if (!e) return null;
+      const fi = fasesDe(recetaDe(e.recetaId)).indexOf(K.faseDeEntrada(c, e));
+      return [0, fi < 0 ? 9999 : fi];
+    };
+    // Dónde va un trozo de notas de una fase: { en, orden, mismaFase } o null si el informe no tiene «Caracterización»
+    const sitioNotas = (B, trozo) => {
+      const orden = (trozo.find((b) => b.faseOrden) || {}).faseOrden;
+      if (!orden) return null;
+      const zB = zonasDe(B);
+      const dentro = B.map((b, k) => k).filter((k) => zB[k] === 'fotos' || zB[k] === 'notasFase');
+      if (!dentro.length) return null;
+      const cmp = (a, b) => a[0] - b[0] || a[1] - b[1];
+      let ultimo = -1;
+      for (const k of dentro) { const o = ordenFase(B[k]); if (o && cmp(o, orden) === 0) ultimo = k; }
+      if (ultimo >= 0) return { en: ultimo + 1, orden, mismaFase: true };
+      for (const k of dentro) {
+        const o = ordenFase(B[k]);
+        if (!o || cmp(o, orden) <= 0) continue;
+        // (delante también del título de esa fase, si lo tiene)
+        let j = k;
+        while (j > 0 && B[j - 1].t === 'p' && B[j - 1].clase === 'fase' && zB[j - 1] !== 'notasFase') j--;
+        return { en: j, orden, mismaFase: false };
+      }
+      return { en: dentro[dentro.length - 1] + 1, orden, mismaFase: false };
+    };
+    // El título y la presentación de «Caracterización», con notas o sin ellas (versión 161)
+    const ajustarCaracterizacion = (B) => {
+      const zB = zonasDe(B);
+      const conNotas = zB.includes('notasFase');
+      const k = B.findIndex((b, j) => b.t === 'h2' && zB[j] === 'fotos');
+      if (k < 0) return;
+      const conFotos = B.some((b, j) => b.t === 'fotos' && (zB[j] === 'fotos' || zB[j] === 'notasFase'));
+      // (sin fotos y sin notas, la sección se queda vacía: fuera su título y su presentación)
+      if (!conFotos && !conNotas) {
+        let fin = k + 1;
+        while (fin < B.length && zB[fin] === 'fotos' && B[fin].t === 'p') fin++;
+        B.splice(k, fin - k);
+        return;
+      }
+      if (/^Caracterización( y observaciones)?$/.test(B[k].texto)) B[k].texto = conNotas && conFotos ? 'Caracterización y observaciones' : 'Caracterización';
+      const p = B[k + 1];
+      if (!p || p.t !== 'p' || !/^Las imágenes( obtenidas| y las observaciones anotadas en el cuaderno) se ordenan/.test(p.texto)) return;
+      const anadido = ' Al final de cada fase se recogen las demás observaciones anotadas durante ella, con el grupo al que se refiere cada una.';
+      let t = p.texto.replace(/^Las imágenes( obtenidas| y las observaciones anotadas en el cuaderno) se ordenan/, `Las imágenes${conNotas ? ' y las observaciones anotadas en el cuaderno' : ' obtenidas'} se ordenan`).replace(anadido, '');
+      if (conNotas) t += anadido;
+      // (la cita de las figuras, hasta la última, que puede ser de una nota)
+      const ids = B.filter((b, j) => b.t === 'fotos' && b.id && (zB[j] === 'fotos' || zB[j] === 'notasFase')).map((b) => b.id);
+      if (ids.length > 1) t = t.replace(/⟦FS:([^:⟧]+):([^⟧]+)⟧/, `⟦FS:${ids[0]}:${ids[ids.length - 1]}⟧`);
+      p.texto = t;
     };
     const aplicarIncluir = (B, B2, quitar, poner) => {
       const m1 = marcasDe(B);
@@ -6081,6 +6239,18 @@
         z2.forEach((z, k) => { if (z !== zona) return; const u = trozos[trozos.length - 1]; if (u && u.fin === k) u.fin = k + 1; else trozos.push({ ini: k, fin: k + 1 }); });
         let primero = true;
         for (const t of trozos) {
+          // (versión 161) Las notas de una fase, a su fase: detrás de lo último de ella; si no tiene nada, delante de
+          // lo de la siguiente con su título (el del informe nuevo); si no, al final de «Caracterización»
+          if (zona === 'notasFase') {
+            const trozo = B2.slice(t.ini, t.fin);
+            const sitio = sitioNotas(B, trozo);
+            if (sitio) {
+              const conTitulo = sitio.mismaFase || trozo.some((b) => b.t === 'p' && b.clase === 'fase')
+                ? [] : B2.filter((b) => b.t === 'p' && b.clase === 'fase' && mismoOrden(b.faseOrden, sitio.orden)).slice(0, 1).map((b) => ({ ...b, zona: 'notasFase' }));
+              B.splice(sitio.en, 0, ...[...conTitulo, ...trozo].map(copia));
+              continue;
+            }
+          }
           const mB = marcasDe(B);
           // Dónde: lo que se rehace, donde estaba; si no, delante de lo que lo sigue en el informe nuevo (si este
           // informe lo tiene) o, si no, detrás de lo que lo precede
@@ -6108,6 +6278,7 @@
           primero = false;
         }
       }
+      if (quitar.includes('notasFase') || poner.includes('notasFase')) ajustarCaracterizacion(B);
       // (lo de las disoluciones de un anexo de antes, que iba junto con los grupos: si se quitan los grupos, sigue
       // con su propio título; si se quitan las disoluciones, el título dice solo «grupo»)
       const zf = zonasDe(B);
@@ -6131,6 +6302,7 @@
         h('label', { class: 'etiqueta-campo' }, h('span', { text: 'Fotos en «Caracterización»' }), selFotos),
         ctx.hayReceta && casilla('conReceta', 'El procedimiento (reactivos, cantidades y pasos)'),
         casilla('conVariaciones', 'Las diferencias de los grupos finales respecto al procedimiento'),
+        casilla('conNotasFase', 'Las notas de cada fase, con su grupo (en «Caracterización y observaciones»)'),
         casilla('conHistoria', 'Anexo: la historia completa de cada grupo'),
         casilla('conHistoriaDis', 'Anexo: la historia de cada disolución'),
         ctx.hayAnterior && casilla('conAnterior', 'Anexo: la historia de las muestras en otros cuadernos'),
@@ -6146,6 +6318,9 @@
         if (!ahora[clave] && quiero[clave]) poner.push(zona);
       }
       if (quiero.fotos !== ahora.fotos) { if (ahora.fotos !== 'ninguna') quitar.push('fotos'); if (quiero.fotos !== 'ninguna') poner.push('fotos'); }
+      // (las notas de cada fase van dentro de «Caracterización»: si el informe no la tiene, se pone primero)
+      if (poner.includes('notasFase') && !zonasDe(x.bloques).includes('fotos') && !poner.includes('fotos')) poner.unshift('fotos');
+      if (poner.includes('fotos') && poner.includes('notasFase')) poner.sort((a, b) => (a === 'fotos' ? -1 : b === 'fotos' ? 1 : 0));
       if (!quitar.length && !poner.length) return;
       guardarLoEscrito();
       const B2 = poner.length ? paraGuardar(modeloInforme(leerCuaderno(), ctx.partesDe(x.cuadernos), { ...ctx.op(), ...quiero, editando: true })) : [];
